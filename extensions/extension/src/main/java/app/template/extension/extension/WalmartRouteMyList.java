@@ -1,9 +1,17 @@
 package app.template.extension.extension;
 
 import android.content.Context;
+import android.graphics.Color;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.lang.reflect.Constructor;
@@ -18,14 +26,16 @@ import java.util.List;
  * Adds a "Plan my route" button to the Walmart shopping-list screen that opens Walmart's own
  * native in-store map (InterfaceC18119a.c, the same single-item "find in aisle" entry point used
  * by product pages and the list screen's own "storeMaps" click handler), fed with pins for every
- * list item that already has a resolved aisle location.
+ * list item that already has a resolved aisle location. A Prev/Next overlay is injected directly
+ * onto the map screen itself (InStoreMapsItemLocatorFragment) to step through items, each step
+ * re-invoking the native locator with a different "primary" item.
  *
  * Everything here uses reflection because the patches module cannot compile against Walmart's
  * internal (obfuscated, renamed-per-release) classes. Field/method/class names below match
  * Walmart Android v26.38 (versionCode 26380016) exactly, as traced from a jadx decompile of that
- * build, cross-checked against the real call site in glass/lists/view/lists/C0.java. They WILL
- * need re-verification against logcat output ("WalmartRouteMyList" tag) on first run, and will
- * need updating for any other app version.
+ * build, cross-checked against real call sites in glass/lists/view/lists/C0.java and
+ * glass/instoremaps/view/InStoreMapsBaseFragment.java. They WILL need re-verification against
+ * logcat output ("WalmartRouteMyList" tag) on first run, and updating for any other app version.
  */
 @SuppressWarnings("unused")
 public class WalmartRouteMyList {
@@ -34,11 +44,21 @@ public class WalmartRouteMyList {
     // Arbitrary unique-ish menu item id, unlikely to collide with Walmart's own menu ids.
     public static final int MENU_ITEM_ID = 0x57414C31;
 
+    // State for the currently active route: the sorted pins, which one is "primary" right now,
+    // and the ListDetailFragment used both to resolve items and as the (verified-real) receiver
+    // for Walmart's own v0 analytics lambda passed into .c(). Cached so the Prev/Next overlay
+    // (which lives on the map screen, not the list screen) can re-invoke the locator without
+    // needing to re-walk the list screen's view model each time.
+    private static Object cachedListFragment;
+    private static List<Object> cachedPinItems;
+    private static int currentIndex = 0;
+    private static View navOverlayView;
+
     /** Called from the patched Z0.kb(Menu, MenuInflater) to add our button. */
     public static void addRouteMenuItem(Menu menu) {
         try {
-            MenuItem item = menu.add(0, MENU_ITEM_ID, 0, "Plan my route");
-            item.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+            MenuItem plan = menu.add(0, MENU_ITEM_ID, 0, "Plan my route");
+            plan.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
             Log.i(TAG, "addRouteMenuItem: added, menu now has " + menu.size() + " item(s)");
         } catch (Throwable t) {
             Log.e(TAG, "addRouteMenuItem failed", t);
@@ -54,7 +74,10 @@ public class WalmartRouteMyList {
             return true;
         }
         try {
-            launch(listDetailFragment);
+            cachedListFragment = listDetailFragment;
+            cachedPinItems = computeSortedPinItems(listDetailFragment);
+            currentIndex = 0;
+            showMapForCurrentIndex();
         } catch (Throwable t) {
             Log.e(TAG, "Route My List failed", t);
             try {
@@ -67,7 +90,22 @@ public class WalmartRouteMyList {
         return true;
     }
 
-    private static void launch(Object fragment) throws Exception {
+    /** Called from the patched InStoreMapsBaseFragment.onViewCreated to add the Prev/Next bar. */
+    public static void onMapFragmentViewCreated(Object mapFragment) {
+        try {
+            injectNavBar(mapFragment);
+        } catch (Throwable t) {
+            Log.e(TAG, "injectNavBar failed", t);
+        }
+    }
+
+    /** Called from the patched InStoreMapsItemLocatorFragment.onDestroyView to clean up the bar. */
+    public static void onMapFragmentDestroyed(Object mapFragment) {
+        removeNavBar();
+    }
+
+    /** Builds (or rebuilds) the list of pins/items for the current list, sorted by aisle code. */
+    private static List<Object> computeSortedPinItems(Object fragment) throws Exception {
         List<Object> products = findProducts(fragment);
         Log.i(TAG, "findProducts returned " + products.size() + " product(s)");
 
@@ -75,11 +113,6 @@ public class WalmartRouteMyList {
         Class<?> pinTypeCls = Class.forName("com.walmart.glass.instoremaps.api.l0");
         Class<?> itemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails");
         Class<?> storeMapPinItemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
-        // Real name is "a" - jadx displayed it as "InterfaceC18119a" only because "a.java" collided
-        // with another file on a case-insensitive filesystem during decompilation; that display
-        // name never existed in the compiled app.
-        Class<?> instoreMapsApiCls = Class.forName("com.walmart.glass.instoremaps.api.a");
-        Class<?> registryCls = Class.forName("glass.platform.registry.api.a");
 
         Constructor<?> pinOptionsCtor = pinOptionsCls.getConstructor(
                 String.class, String.class, String.class, String.class, Boolean.class,
@@ -140,10 +173,38 @@ public class WalmartRouteMyList {
                     "No list items had a resolved aisle location (see earlier 'Skipping' log lines)");
         }
 
-        Object instoreMapsApi = getFromRegistry(registryCls, instoreMapsApiCls);
-        if (instoreMapsApi == null) {
-            throw new IllegalStateException("glass.platform.registry.api.a returned null for InterfaceC18119a");
-        }
+        // Approximate a sensible walking order with no floorplan graph available: a natural
+        // (alphanumeric-aware) sort of the aisle code puts e.g. "A2" before "A10" and groups
+        // same-letter aisles together, which is a reasonable proxy for "walk the aisles in order."
+        Field pinOptionsAisleField = pinOptionsCls.getField("b");
+        Field pinItemOptionsField = storeMapPinItemDetailsCls.getField("a");
+        pinItems.sort((p1, p2) -> {
+            try {
+                String aisle1 = (String) pinOptionsAisleField.get(pinItemOptionsField.get(p1));
+                String aisle2 = (String) pinOptionsAisleField.get(pinItemOptionsField.get(p2));
+                return naturalCompare(aisle1, aisle2);
+            } catch (Exception e) {
+                return 0;
+            }
+        });
+
+        return pinItems;
+    }
+
+    /** (Re)opens the native map, focused on cachedPinItems.get(currentIndex), with all pins shown. */
+    private static void showMapForCurrentIndex() throws Exception {
+        if (cachedPinItems == null || cachedPinItems.isEmpty()) return;
+        currentIndex = ((currentIndex % cachedPinItems.size()) + cachedPinItems.size()) % cachedPinItems.size();
+        Log.i(TAG, "Showing item " + (currentIndex + 1) + " of " + cachedPinItems.size() + " (sorted by aisle)");
+
+        Class<?> pinOptionsCls = Class.forName("com.walmart.glass.instoremaps.api.PinOptions");
+        Class<?> itemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails");
+        Class<?> storeMapPinItemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+        // Real name is "a" - jadx displayed it as "InterfaceC18119a" only because "a.java" collided
+        // with another file on a case-insensitive filesystem during decompilation; that display
+        // name never existed in the compiled app.
+        Class<?> instoreMapsApiCls = Class.forName("com.walmart.glass.instoremaps.api.a");
+        Class<?> registryCls = Class.forName("glass.platform.registry.api.a");
 
         // Use the single-item locator (.c), proven live today from product pages and the list
         // screen's own existing "storeMaps" click handler (glass/lists/view/lists/C0.java) rather
@@ -153,10 +214,11 @@ public class WalmartRouteMyList {
         // We replicate it exactly, reusing that same merged-lambda receiver pattern with our own
         // fragment instance - a verified-real (arity, receiver-type) pair, not a guess.
         List<Object> allPinOptions = new ArrayList<>();
-        for (Object pinItem : pinItems) {
+        for (Object pinItem : cachedPinItems) {
             allPinOptions.add(pinOptionsCls.cast(storeMapPinItemDetailsCls.getField("a").get(pinItem)));
         }
-        Object firstItemDetails = itemDetailsCls.cast(storeMapPinItemDetailsCls.getField("b").get(pinItems.get(0)));
+        Object primaryItemDetails = itemDetailsCls.cast(
+                storeMapPinItemDetailsCls.getField("b").get(cachedPinItems.get(currentIndex)));
 
         Class<?> launchSourceCls = Class.forName("com.walmart.glass.instoremaps.api.c");
         Class<?> launchSourceVariantCls = Class.forName("com.walmart.glass.instoremaps.api.c$a");
@@ -165,14 +227,116 @@ public class WalmartRouteMyList {
         Class<?> function1Cls = Class.forName("kotlin.jvm.functions.Function1");
         // jadx displayed this as "C14686v0" (a collision-disambiguation prefix, same pattern as
         // InterfaceC18119a -> "a"); the real class name is just the preserved "v0" suffix.
+        // (A Proxy implementing Function1 directly was tried to hook the Fragment it receives -
+        // confirmed real class com.walmart.glass.instoremaps.view.InStoreMapsItemLocatorFragment -
+        // but returning null from it stopped .c() from actually showing the screen, so the real
+        // v0 lambda is used here; the fragment is hooked separately via its own patched lifecycle.)
         Class<?> callbackImplCls = Class.forName("com.walmart.glass.checkout.analytics.v0");
         Constructor<?> callbackCtor = callbackImplCls.getDeclaredConstructor(Object.class, int.class);
         callbackCtor.setAccessible(true);
-        Object callback = callbackCtor.newInstance(fragment, 3);
+        Object callback = callbackCtor.newInstance(cachedListFragment, 3);
+
+        Object instoreMapsApi = getFromRegistry(registryCls, instoreMapsApiCls);
+        if (instoreMapsApi == null) {
+            throw new IllegalStateException("glass.platform.registry.api.a returned null for InterfaceC18119a");
+        }
 
         Method cMethod = instoreMapsApiCls.getMethod("c", java.util.Collection.class, itemDetailsCls, launchSourceCls, function1Cls);
-        cMethod.invoke(instoreMapsApi, allPinOptions, firstItemDetails, launchSource, callback);
-        Log.i(TAG, "InterfaceC18119a.c() invoked with " + allPinOptions.size() + " pin(s)");
+        cMethod.invoke(instoreMapsApi, allPinOptions, primaryItemDetails, launchSource, callback);
+        Log.i(TAG, "InterfaceC18119a.c() invoked with " + allPinOptions.size() + " pin(s), primary index " + currentIndex);
+    }
+
+    /** Adds a floating Prev/Next bar to the map screen's own window, below the item detail card. */
+    private static void injectNavBar(Object mapFragment) throws Exception {
+        removeNavBar();
+        if (cachedPinItems == null || cachedPinItems.size() <= 1) {
+            return; // Nothing to page through.
+        }
+
+        Method getView = mapFragment.getClass().getMethod("getView");
+        View root = (View) getView.invoke(mapFragment);
+        if (root == null) {
+            Log.i(TAG, "injectNavBar: fragment view is null, skipping");
+            return;
+        }
+        View windowRoot = root.getRootView();
+        if (!(windowRoot instanceof ViewGroup)) {
+            Log.i(TAG, "injectNavBar: root view is not a ViewGroup, skipping");
+            return;
+        }
+        Context context = root.getContext();
+        float density = context.getResources().getDisplayMetrics().density;
+
+        LinearLayout bar = new LinearLayout(context);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(Color.argb(230, 0, 113, 206)); // Walmart blue, mostly opaque
+        int padV = (int) (10 * density);
+        int padH = (int) (18 * density);
+        bar.setPadding(padH, padV, padH, padV);
+
+        Button prev = new Button(context);
+        prev.setText("◀ Prev");
+        styleNavButton(prev);
+
+        TextView label = new TextView(context);
+        label.setTextColor(Color.WHITE);
+        label.setGravity(Gravity.CENTER);
+        label.setPadding(padH, 0, padH, 0);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        label.setLayoutParams(labelParams);
+
+        Button next = new Button(context);
+        next.setText("Next ▶");
+        styleNavButton(next);
+
+        prev.setOnClickListener(v -> step(-1, label));
+        next.setOnClickListener(v -> step(1, label));
+
+        bar.addView(prev);
+        bar.addView(label);
+        bar.addView(next);
+        updateLabel(label);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        params.bottomMargin = (int) (220 * density); // sits just below the item detail card
+
+        ((ViewGroup) windowRoot).addView(bar, params);
+        navOverlayView = bar;
+        Log.i(TAG, "injectNavBar: added Prev/Next bar for " + cachedPinItems.size() + " items");
+    }
+
+    private static void styleNavButton(Button button) {
+        button.setTextColor(Color.WHITE);
+        button.setBackgroundColor(Color.argb(60, 255, 255, 255));
+    }
+
+    private static void updateLabel(TextView label) {
+        if (cachedPinItems == null) return;
+        label.setText((currentIndex + 1) + " of " + cachedPinItems.size());
+    }
+
+    private static void step(int delta, TextView label) {
+        try {
+            currentIndex += delta;
+            showMapForCurrentIndex();
+            // showMapForCurrentIndex() opens a fresh map Fragment, whose own onViewCreated will
+            // call injectNavBar() again and replace this bar/label - updateLabel() here is a
+            // best-effort immediate reflection of the tap in case that takes a moment.
+            updateLabel(label);
+        } catch (Throwable t) {
+            Log.e(TAG, "step failed", t);
+        }
+    }
+
+    private static void removeNavBar() {
+        if (navOverlayView != null && navOverlayView.getParent() instanceof ViewGroup) {
+            ((ViewGroup) navOverlayView.getParent()).removeView(navOverlayView);
+        }
+        navOverlayView = null;
     }
 
     /** Tries the fragment's ViewModel first (via Ye()), then the fragment itself, for a list of items with getProduct(). */
@@ -292,5 +456,31 @@ public class WalmartRouteMyList {
 
     private static boolean isEmpty(String s) {
         return s == null || s.isEmpty();
+    }
+
+    /** Alphanumeric-aware comparison so "A2" sorts before "A10" instead of after it. */
+    private static int naturalCompare(String a, String b) {
+        if (a == null) a = "";
+        if (b == null) b = "";
+        int i = 0, j = 0;
+        while (i < a.length() && j < b.length()) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(j);
+            if (Character.isDigit(ca) && Character.isDigit(cb)) {
+                int si = i, sj = j;
+                while (i < a.length() && Character.isDigit(a.charAt(i))) i++;
+                while (j < b.length() && Character.isDigit(b.charAt(j))) j++;
+                String numA = a.substring(si, i).replaceFirst("^0+(?=\\d)", "");
+                String numB = b.substring(sj, j).replaceFirst("^0+(?=\\d)", "");
+                if (numA.length() != numB.length()) return numA.length() - numB.length();
+                int cmp = numA.compareTo(numB);
+                if (cmp != 0) return cmp;
+            } else {
+                if (ca != cb) return Character.compare(Character.toLowerCase(ca), Character.toLowerCase(cb));
+                i++;
+                j++;
+            }
+        }
+        return (a.length() - i) - (b.length() - j);
     }
 }

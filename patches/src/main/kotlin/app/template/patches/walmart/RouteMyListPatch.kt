@@ -56,6 +56,24 @@ object ListDetailFragmentZeFingerprint : Fingerprint(
     parameters = listOf("Z"),
 )
 
+// Shared by InStoreMapsItemLocatorFragment (and other instoremaps screens); views are already
+// inflated by onCreateView by the time this runs, so it's a safe place to inject the Prev/Next bar.
+object InStoreMapsBaseFragmentViewCreatedFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsBaseFragment;",
+    name = "onViewCreated",
+    accessFlags = listOf(AccessFlags.PUBLIC),
+    returnType = "V",
+    parameters = listOf("Landroid/view/View;", "Landroid/os/Bundle;"),
+)
+
+object InStoreMapsItemLocatorFragmentDestroyViewFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsItemLocatorFragment;",
+    name = "onDestroyView",
+    accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
+    returnType = "V",
+    parameters = emptyList(),
+)
+
 val routeMyListPatch = bytecodePatch(
     name = "Route My List",
     description = "Adds a 'Plan my route' button to the Walmart shopping list screen that opens " +
@@ -99,5 +117,16 @@ val routeMyListPatch = bytecodePatch(
         check(callIndex >= 0) { "Could not find config.f.I() call in ListDetailFragment.Ze" }
         val resultRegister = (zeMethod.instructions[callIndex + 1] as OneRegisterInstruction).registerA
         zeMethod.replaceInstruction(callIndex + 1, "const/4 v$resultRegister, 0x1")
+
+        // Views are already bound (onCreateView ran first), so it's safe to inject at index 0.
+        InStoreMapsBaseFragmentViewCreatedFingerprint.method.addInstructions(
+            0,
+            "invoke-static {p0}, $EXTENSION_CLASS->onMapFragmentViewCreated(Ljava/lang/Object;)V",
+        )
+
+        InStoreMapsItemLocatorFragmentDestroyViewFingerprint.method.addInstructions(
+            0,
+            "invoke-static {p0}, $EXTENSION_CLASS->onMapFragmentDestroyed(Ljava/lang/Object;)V",
+        )
     }
 }
