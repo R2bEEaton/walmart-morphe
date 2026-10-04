@@ -8,6 +8,7 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -50,6 +51,7 @@ public class WalmartRouteMyList {
     // (which lives on the map screen, not the list screen) can re-invoke the locator without
     // needing to re-walk the list screen's view model each time.
     private static Object cachedListFragment;
+    private static Object cachedMapFragment;
     private static List<Object> cachedPinItems;
     private static int currentIndex = 0;
     private static View navOverlayView;
@@ -93,6 +95,7 @@ public class WalmartRouteMyList {
     /** Called from the patched InStoreMapsBaseFragment.onViewCreated to add the Prev/Next bar. */
     public static void onMapFragmentViewCreated(Object mapFragment) {
         try {
+            cachedMapFragment = mapFragment;
             injectNavBar(mapFragment);
         } catch (Throwable t) {
             Log.e(TAG, "injectNavBar failed", t);
@@ -101,6 +104,9 @@ public class WalmartRouteMyList {
 
     /** Called from the patched InStoreMapsItemLocatorFragment.onDestroyView to clean up the bar. */
     public static void onMapFragmentDestroyed(Object mapFragment) {
+        if (cachedMapFragment == mapFragment) {
+            cachedMapFragment = null;
+        }
         removeNavBar();
     }
 
@@ -321,15 +327,79 @@ public class WalmartRouteMyList {
 
     private static void step(int delta, TextView label) {
         try {
+            if (cachedPinItems == null || cachedPinItems.isEmpty()) {
+                return;
+            }
             currentIndex += delta;
-            showMapForCurrentIndex();
-            // showMapForCurrentIndex() opens a fresh map Fragment, whose own onViewCreated will
-            // call injectNavBar() again and replace this bar/label - updateLabel() here is a
-            // best-effort immediate reflection of the tap in case that takes a moment.
+            currentIndex = ((currentIndex % cachedPinItems.size()) + cachedPinItems.size()) % cachedPinItems.size();
+            renderMountedMapWithFocusedPin();
+            updateMountedItemCard();
             updateLabel(label);
         } catch (Throwable t) {
             Log.e(TAG, "step failed", t);
         }
+    }
+
+    /**
+     * Re-renders pins through the WebView already owned by the visible Fragment. The native
+     * launcher creates a new Fragment and WebView; this sends the same RENDER_PINS_REQUESTED
+     * message to the mounted page. Walmart's response to that message carries the selected map
+     * area and its existing callback animates the camera to that area.
+     */
+    private static void renderMountedMapWithFocusedPin() throws Exception {
+        if (cachedMapFragment == null || cachedPinItems == null || cachedPinItems.isEmpty()) {
+            throw new IllegalStateException("The active store map is not available.");
+        }
+
+        Class<?> pinOptionsCls = Class.forName("com.walmart.glass.instoremaps.api.PinOptions");
+        Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+        Class<?> renderPinCls = Class.forName("com.walmart.glass.instoremaps.model.request.RenderPin$Pin");
+        Field pinItemOptionsField = pinItemCls.getField("a");
+        Constructor<?> renderPinCtor = renderPinCls.getConstructor(
+                Boolean.class, Boolean.class, Boolean.class, Integer.class,
+                String.class, String.class, String.class, String.class, String.class);
+
+        List<Object> renderedPins = new ArrayList<>();
+        for (int index = 0; index < cachedPinItems.size(); index++) {
+            Object original = pinOptionsCls.cast(pinItemOptionsField.get(cachedPinItems.get(index)));
+            Object pinType = pinOptionsCls.getField("g").get(original);
+            String pinTypeName = pinType == null ? null : (String) callNoArg(pinType, "a");
+            renderedPins.add(renderPinCtor.newInstance(
+                    pinOptionsCls.getField("e").get(original),
+                    Boolean.valueOf(index == currentIndex),
+                    pinOptionsCls.getField("i").get(original),
+                    pinOptionsCls.getField("f").get(original),
+                    pinTypeName,
+                    pinOptionsCls.getField("a").get(original),
+                    pinOptionsCls.getField("b").get(original),
+                    pinOptionsCls.getField("c").get(original),
+                    null));
+        }
+
+        Class<?> jsMessageCls = Class.forName("com.walmart.glass.instoremaps.z");
+        String script = (String) jsMessageCls.getMethod("a", List.class).invoke(null, renderedPins);
+        WebView webView = (WebView) cachedMapFragment.getClass().getField("i").get(cachedMapFragment);
+        if (webView == null) {
+            throw new IllegalStateException("The mounted map WebView is unavailable.");
+        }
+        webView.evaluateJavascript(script, null);
+        Log.i(TAG, "RENDER_PINS_REQUESTED sent to the mounted map, primary index " + currentIndex);
+    }
+
+    /** Updates the locator Fragment's native item card without recreating that Fragment. */
+    private static void updateMountedItemCard() throws Exception {
+        Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+        Object itemDetails = pinItemCls.getField("b").get(cachedPinItems.get(currentIndex));
+        String title = (String) itemDetails.getClass().getField("c").get(itemDetails);
+        String location = (String) itemDetails.getClass().getField("d").get(itemDetails);
+
+        Object fragmentBinding = callNoArg(cachedMapFragment, "Ve");
+        Object itemCardBinding = fragmentBinding.getClass().getField("g").get(fragmentBinding);
+        TextView titleView = (TextView) itemCardBinding.getClass().getField("j").get(itemCardBinding);
+        TextView locationView = (TextView) itemCardBinding.getClass().getField("h").get(itemCardBinding);
+        titleView.setText(title == null ? "" : title);
+        locationView.setText(location == null || location.isEmpty() ? "" : "Aisle " + location);
+        Log.i(TAG, "Updated mounted item card for primary index " + currentIndex);
     }
 
     private static void removeNavBar() {
