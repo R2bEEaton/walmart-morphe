@@ -56,22 +56,15 @@ object ListDetailFragmentZeFingerprint : Fingerprint(
     parameters = listOf("Z"),
 )
 
-// Shared by InStoreMapsItemLocatorFragment (and other instoremaps screens); views are already
-// inflated by onCreateView by the time this runs, so it's a safe place to inject the Prev/Next bar.
-object InStoreMapsBaseFragmentViewCreatedFingerprint : Fingerprint(
-    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsBaseFragment;",
+// Route My List's native fragment owns both the real shelf-label capability check and its
+// timer/cooldown state.  Hook it after its layout is created so the extension can ask that
+// state machine to render, then present the native action as a compact affordance.
+object NativeRouteMyListViewCreatedFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsMultiItemLocatorFragment;",
     name = "onViewCreated",
-    accessFlags = listOf(AccessFlags.PUBLIC),
-    returnType = "V",
-    parameters = listOf("Landroid/view/View;", "Landroid/os/Bundle;"),
-)
-
-object InStoreMapsItemLocatorFragmentDestroyViewFingerprint : Fingerprint(
-    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsItemLocatorFragment;",
-    name = "onDestroyView",
     accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
     returnType = "V",
-    parameters = emptyList(),
+    parameters = listOf("Landroid/view/View;", "Landroid/os/Bundle;"),
 )
 
 val routeMyListPatch = bytecodePatch(
@@ -118,15 +111,15 @@ val routeMyListPatch = bytecodePatch(
         val resultRegister = (zeMethod.instructions[callIndex + 1] as OneRegisterInstruction).registerA
         zeMethod.replaceInstruction(callIndex + 1, "const/4 v$resultRegister, 0x1")
 
-        // Views are already bound (onCreateView ran first), so it's safe to inject at index 0.
-        InStoreMapsBaseFragmentViewCreatedFingerprint.method.addInstructions(
-            0,
-            "invoke-static {p0}, $EXTENSION_CLASS->onMapFragmentViewCreated(Ljava/lang/Object;)V",
+        // Run after Walmart has installed the carousel and its click listener. The extension
+        // schedules its UI work on the view, so this never races the superclass setup above.
+        val nativeRouteMethod = NativeRouteMyListViewCreatedFingerprint.method
+        nativeRouteMethod.addInstructions(
+            nativeRouteMethod.instructions.size - 1,
+            // This large fragment has p0 above the four-bit invoke register range, so use the
+            // range form rather than relying on the patcher to allocate a temporary register.
+            "invoke-static/range {p0 .. p0}, $EXTENSION_CLASS->onNativeRouteMyListViewCreated(Ljava/lang/Object;)V",
         )
 
-        InStoreMapsItemLocatorFragmentDestroyViewFingerprint.method.addInstructions(
-            0,
-            "invoke-static {p0}, $EXTENSION_CLASS->onMapFragmentDestroyed(Ljava/lang/Object;)V",
-        )
     }
 }

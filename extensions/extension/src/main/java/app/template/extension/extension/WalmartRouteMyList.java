@@ -15,10 +15,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -56,6 +58,11 @@ public class WalmartRouteMyList {
     private static int currentIndex = 0;
     private static View navOverlayView;
 
+    // Retain neither a Fragment nor a View: Route My List fragments are short lived and its
+    // carousel is rebuilt as the shopper checks items off.  Weak references only prevent us from
+    // registering the same layout observer more than once.
+    private static final List<WeakReference<View>> FLASH_ROUTE_ROOTS = new ArrayList<>();
+
     /** Called from the patched Z0.kb(Menu, MenuInflater) to add our button. */
     public static void addRouteMenuItem(Menu menu) {
         try {
@@ -79,7 +86,7 @@ public class WalmartRouteMyList {
             cachedListFragment = listDetailFragment;
             cachedPinItems = computeSortedPinItems(listDetailFragment);
             currentIndex = 0;
-            showMapForCurrentIndex();
+            showNativeRouteMyList();
         } catch (Throwable t) {
             Log.e(TAG, "Route My List failed", t);
             try {
@@ -90,6 +97,241 @@ public class WalmartRouteMyList {
             }
         }
         return true;
+    }
+
+    /**
+     * Called after Walmart creates its multi-item Route My List carousel.  The native view model
+     * already knows whether the selected store/item can flash an ESL tag and owns the timer and
+     * cooldown.  Asking it to refresh here preserves those rules; we only compact its otherwise
+     * large action button into an eye button beside the item's checkbox.
+     */
+    public static void onNativeRouteMyListViewCreated(Object routeFragment) {
+        try {
+            Object viewModel = callNoArg(routeFragment, "cf");
+            viewModel.getClass().getMethod("Me").invoke(viewModel);
+            View root = (View) callNoArg(routeFragment, "getView");
+            if (root == null || hasFlashRouteObserver(root)) return;
+            rememberFlashRouteRoot(root);
+            root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
+            root.post(() -> compactNativeFlashButtons(root));
+            Log.i(TAG, "Native Route My List flash capability refresh requested");
+        } catch (Throwable t) {
+            // Flashing is an optional enhancement.  Do not interfere with the route if a future
+            // Walmart release changes this private view-model API.
+            Log.w(TAG, "Unable to initialize Route My List flash control", t);
+        }
+    }
+
+    private static synchronized boolean hasFlashRouteObserver(View root) {
+        for (int i = FLASH_ROUTE_ROOTS.size() - 1; i >= 0; i--) {
+            View observed = FLASH_ROUTE_ROOTS.get(i).get();
+            if (observed == null) {
+                FLASH_ROUTE_ROOTS.remove(i);
+            } else if (observed == root) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static synchronized void rememberFlashRouteRoot(View root) {
+        FLASH_ROUTE_ROOTS.add(new WeakReference<>(root));
+    }
+
+    /** Walks the native carousel after each bind.  Only native buttons whose own label says
+     * "flash" are replaced; navigation, item-detail, and check-off controls remain untouched. */
+    private static void compactNativeFlashButtons(View root) {
+        try {
+            List<View> allViews = new ArrayList<>();
+            collectViews(root, allViews);
+            hideRouteFeedbackPrompt(allViews);
+            for (View candidate : allViews) {
+                if (!candidate.getClass().getName().endsWith("WcpButton")) continue;
+                if (!(candidate instanceof TextView)) continue;
+                String label = String.valueOf(((TextView) candidate).getText()).toLowerCase();
+                if (!label.contains("flash")) continue;
+                compactNativeFlashButton((TextView) candidate);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to compact native flash control", t);
+        }
+    }
+
+    /** Removes only the native feedback sentence shown below Route My List's carousel. */
+    private static void hideRouteFeedbackPrompt(List<View> views) {
+        for (View view : views) {
+            if (!(view instanceof TextView)) continue;
+            String text = String.valueOf(((TextView) view).getText());
+            if (text.startsWith("We'd love to hear what you think!") &&
+                    text.contains("Give feedback")) {
+                view.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    private static void compactNativeFlashButton(TextView nativeButton) {
+        ViewGroup parent = nativeButton.getParent() instanceof ViewGroup
+                ? (ViewGroup) nativeButton.getParent() : null;
+        if (parent == null) return;
+
+        TextView eye = findFlashEye(parent, nativeButton);
+        if (eye == null) {
+            eye = new TextView(parent.getContext());
+            eye.setText("\uD83D\uDC41");
+            eye.setTextSize(19);
+            eye.setGravity(Gravity.CENTER);
+            eye.setTextColor(Color.rgb(0, 113, 206));
+            eye.setContentDescription("Flash price tag");
+            eye.setPadding(0, 0, 0, 0);
+            eye.setTag(nativeButton);
+
+            if (!addEyeBesideCheckbox(parent, eye)) return;
+            final TextView eyeControl = eye;
+            eye.setOnClickListener(v -> {
+                // The native click listener emits the real flashPriceLabel event and hands its
+                // timer/cooldown state back to the carousel. We deliberately do not synthesize a
+                // flash request or a local timer here.
+                eyeControl.setEnabled(false);
+                eyeControl.setAlpha(0.45f);
+                nativeButton.performClick();
+            });
+        }
+
+        // When the native timer is showing, let its visible cooldown UI take over. Once its
+        // state machine returns to the normal flash action this method makes the eye active again.
+        if (containsVisibleTimedButton(parent)) {
+            eye.setVisibility(View.GONE);
+            return;
+        }
+        eye.setVisibility(View.VISIBLE);
+        eye.setEnabled(true);
+        eye.setAlpha(1f);
+        nativeButton.setVisibility(View.GONE);
+    }
+
+    private static TextView findFlashEye(ViewGroup parent, TextView nativeButton) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            if (child instanceof TextView && child.getTag() == nativeButton) return (TextView) child;
+        }
+        return null;
+    }
+
+    private static boolean addEyeBesideCheckbox(ViewGroup parent, TextView eye) {
+        try {
+            View checkbox = findViewByClassSuffix(parent, "WcpCheckbox");
+            if (checkbox == null || checkbox.getId() == View.NO_ID ||
+                    !parent.getClass().getName().endsWith("ConstraintLayout")) return false;
+            Class<?> paramsClass = Class.forName("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams");
+            Object params = paramsClass.getConstructor(int.class, int.class)
+                    .newInstance(dp(parent, 36), dp(parent, 36));
+            paramsClass.getField("endToStart").setInt(params, checkbox.getId());
+            paramsClass.getField("topToTop").setInt(params, checkbox.getId());
+            paramsClass.getField("bottomToBottom").setInt(params, checkbox.getId());
+            parent.addView(eye, (ViewGroup.LayoutParams) params);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean containsVisibleTimedButton(View root) {
+        List<View> views = new ArrayList<>();
+        collectViews(root, views);
+        for (View view : views) {
+            if (view.getVisibility() == View.VISIBLE &&
+                    view.getClass().getName().endsWith("TimedButtonView")) return true;
+        }
+        return false;
+    }
+
+    private static View findViewByClassSuffix(View root, String suffix) {
+        if (root.getClass().getName().endsWith(suffix)) return root;
+        if (!(root instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) root;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View found = findViewByClassSuffix(group.getChildAt(i), suffix);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static void collectViews(View root, List<View> output) {
+        output.add(root);
+        if (!(root instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) root;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            collectViews(group.getChildAt(i), output);
+        }
+    }
+
+    private static int dp(View view, int dp) {
+        return (int) (dp * view.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /**
+     * Opens Walmart's own multi-item Route My List destination. This is the internal flow that
+     * owns the provider-specific entrance/exit route line; the patch only supplies resolved list
+     * pins and the normal shopping-list launch context.
+     */
+    private static void showNativeRouteMyList() throws Exception {
+        if (cachedPinItems == null || cachedPinItems.isEmpty()) return;
+
+        Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+        Class<?> routeDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.RouteMyListAnalyticsDetails");
+        Class<?> contextEnumCls = Class.forName("com.walmart.analytics.schema.ContextEnum");
+        Class<?> multiItemMapCls = Class.forName("com.walmart.glass.instoremaps.view.InStoreMapsMultiItemLocatorFragment");
+        Class<?> routeArgsCls = Class.forName("com.walmart.glass.instoremaps.view.g0");
+        Class<?> navigationApiCls = Class.forName("glass.platform.navigation.api.f");
+        Class<?> navigationActionsCls = Class.forName("glass.platform.navigation.api.e");
+        Class<?> registryCls = Class.forName("glass.platform.registry.api.a");
+        Class<?> function1Cls = Class.forName("kotlin.jvm.functions.Function1");
+
+        Object context = contextEnumCls.getField("myItems").get(null);
+        Object analyticsDetails = routeDetailsCls.getConstructor(contextEnumCls, String.class, String.class)
+                .newInstance(context, "", "");
+        String storeId = getCurrentStoreId(cachedListFragment);
+        Object pinArray = java.lang.reflect.Array.newInstance(pinItemCls, cachedPinItems.size());
+        for (int index = 0; index < cachedPinItems.size(); index++) {
+            java.lang.reflect.Array.set(pinArray, index, cachedPinItems.get(index));
+        }
+        Object routeArgs = routeArgsCls.getConstructor(pinArray.getClass(), String.class, routeDetailsCls)
+                .newInstance(pinArray, storeId, analyticsDetails);
+        Object routeFragment = multiItemMapCls.getConstructor().newInstance();
+        multiItemMapCls.getMethod("setArguments", Class.forName("android.os.Bundle"))
+                .invoke(routeFragment, routeArgsCls.getMethod("a").invoke(routeArgs));
+
+        Object navigationApi = getFromRegistryUsingE(registryCls, navigationApiCls);
+        if (navigationApi == null) {
+            throw new IllegalStateException("Walmart navigation API is unavailable.");
+        }
+        Object navigationCallback = Proxy.newProxyInstance(
+                function1Cls.getClassLoader(), new Class[]{function1Cls}, (proxy, method, args) -> {
+                    if ("invoke".equals(method.getName()) && args != null && args.length == 1) {
+                        return navigationActionsCls.getMethod("Q", Class.forName("androidx.fragment.app.Fragment"), boolean.class)
+                                .invoke(args[0], routeFragment, true);
+                    }
+                    if ("toString".equals(method.getName())) return "RouteMyListNavigationCallback";
+                    return null;
+                });
+        Context androidContext = (Context) callNoArg(cachedListFragment, "requireContext");
+        navigationApiCls.getMethod("O2", Context.class, function1Cls)
+                .invoke(navigationApi, androidContext, navigationCallback);
+        Log.i(TAG, "Opened native Route My List with " + cachedPinItems.size() + " pin(s)");
+    }
+
+    /** Gets the active shopping-list store ID using the same view-model path as Walmart's UI. */
+    private static String getCurrentStoreId(Object listDetailFragment) {
+        try {
+            Object viewModel = callNoArg(listDetailFragment, "Ye");
+            Object storeLiveData = viewModel.getClass().getField("l").get(viewModel);
+            Object store = callNoArg(storeLiveData, "getValue");
+            Object storeId = store == null ? null : store.getClass().getField("a").get(store);
+            return storeId == null ? "" : storeId.toString();
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to read selected store ID; native Route My List will resolve it", t);
+            return "";
+        }
     }
 
     /** Called from the patched InStoreMapsBaseFragment.onViewCreated to add the Prev/Next bar. */
@@ -164,11 +406,18 @@ public class WalmartRouteMyList {
             }
             if (itemId == null) itemId = "";
             if (name == null) name = "";
+            Object imageInfo = tryCallAny(product, "getImageInfo", "P", "g2");
+            String thumbnailUrl = imageInfo == null ? null : (String) tryCallAny(
+                    imageInfo, "getThumbnailUrl", "a", "i");
+            String preciseLocation = aisleNumber;
+            if (!isEmpty(section)) {
+                preciseLocation += " \u00b7 Section " + section;
+            }
 
             Object pinOptions = pinOptionsCtor.newInstance(
                     zone, aisleNumber, section, null, null, null, null, null, null);
             Object itemDetails = itemDetailsCtor.newInstance(
-                    null, itemId, name, isEmpty(displayValue) ? aisleNumber : displayValue, null, null,
+                    thumbnailUrl, itemId, name, preciseLocation, null, null,
                     null, null, null, null, null, null, null, null, null, null,
                     Collections.emptyList(), 1);
             pinItems.add(pinItemCtor.newInstance(pinOptions, itemDetails));
@@ -494,6 +743,14 @@ public class WalmartRouteMyList {
         }
         Field instanceField = registryCls.getField("INSTANCE");
         return m.invoke(instanceField.get(null), wantedCls);
+    }
+
+    /** Gets an eagerly-registered platform service; navigation is registered through e(), not a(). */
+    private static Object getFromRegistryUsingE(Class<?> registryCls, Class<?> wantedCls) throws Exception {
+        Method m = registryCls.getMethod("e", Class.class);
+        m.setAccessible(true);
+        return Modifier.isStatic(m.getModifiers()) ? m.invoke(null, wantedCls)
+                : m.invoke(registryCls.getField("INSTANCE").get(null), wantedCls);
     }
 
     private static Object callNoArg(Object target, String methodName) throws Exception {
