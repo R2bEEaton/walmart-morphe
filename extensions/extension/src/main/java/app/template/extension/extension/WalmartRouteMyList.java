@@ -122,6 +122,60 @@ public class WalmartRouteMyList {
         }
     }
 
+    /**
+     * Called after Walmart's own checkbox listener has updated its route state. Scrolling the
+     * native RecyclerView keeps its item-focus callback, map pin selection, and animations intact.
+     */
+    public static void onNativeRouteCheckboxToggled(Object carouselClickListener) {
+        try {
+            Object routeFragment = readField(carouselClickListener, "a");
+            View root = (View) callNoArg(routeFragment, "getView");
+            if (root != null) {
+                root.post(() -> advanceToNextUnchecked(routeFragment));
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to schedule Route My List auto-advance", t);
+        }
+    }
+
+    private static void advanceToNextUnchecked(Object routeFragment) {
+        try {
+            Object binding = callNoArg(routeFragment, "Ve");
+            Object carouselBinding = readField(binding, "h");
+            Object carousel = readField(carouselBinding, "b");
+            String completedItemId = (String) readField(carousel, "b");
+            Object adapter = readField(carousel, "a");
+            List<?> items = (List<?>) readField(adapter, "c");
+            if (items == null || items.isEmpty()) return;
+
+            int completedIndex = -1;
+            for (int index = 0; index < items.size(); index++) {
+                Object itemDetails = readField(items.get(index), "a");
+                String itemId = (String) readField(itemDetails, "b");
+                if (completedItemId.equals(itemId)) {
+                    completedIndex = index;
+                    break;
+                }
+            }
+            if (completedIndex < 0) return;
+
+            for (int offset = 1; offset < items.size(); offset++) {
+                int nextIndex = (completedIndex + offset) % items.size();
+                Object candidate = items.get(nextIndex);
+                boolean checked = ((Boolean) readField(candidate, "c")).booleanValue();
+                if (!checked) {
+                    carousel.getClass().getMethod("smoothScrollToPosition", int.class)
+                            .invoke(carousel, nextIndex);
+                    Log.i(TAG, "Advanced Route My List to unchecked carousel item " + (nextIndex + 1));
+                    return;
+                }
+            }
+            Log.i(TAG, "All Route My List items are checked; leaving native completed state selected");
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to advance Route My List carousel", t);
+        }
+    }
+
     private static synchronized boolean hasFlashRouteObserver(View root) {
         for (int i = FLASH_ROUTE_ROOTS.size() - 1; i >= 0; i--) {
             View observed = FLASH_ROUTE_ROOTS.get(i).get();
@@ -162,8 +216,8 @@ public class WalmartRouteMyList {
         for (View view : views) {
             if (!(view instanceof TextView)) continue;
             String text = String.valueOf(((TextView) view).getText());
-            if (text.startsWith("We'd love to hear what you think!") &&
-                    text.contains("Give feedback")) {
+            if (text.startsWith("We'd love to hear what you think!") ||
+                    "Give feedback".equals(text.trim())) {
                 view.setVisibility(View.GONE);
             }
         }
@@ -267,6 +321,12 @@ public class WalmartRouteMyList {
 
     private static int dp(View view, int dp) {
         return (int) (dp * view.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static Object readField(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
     /**
