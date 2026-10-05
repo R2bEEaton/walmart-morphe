@@ -169,13 +169,22 @@ public class WalmartRouteMyList {
             viewModel = callNoArg(routeFragment, "cf");
             Object mapDataReady = readField(viewModel, "Y");
             Object selectedMapArea = readField(viewModel, "Z");
-            if (mapDataReady == null || selectedMapArea == null) return false;
+            if (mapDataReady == null || selectedMapArea == null) {
+                Log.i(TAG, "Route My List geometry pending: mapDataReady="
+                        + (mapDataReady != null) + ", selectedMapArea="
+                        + (selectedMapArea != null));
+                return false;
+            }
 
             List<RouteMyListGeometry.Poi> pois = geometryPois((List<?>) readField(mapDataReady, "b"));
             List<RouteMyListGeometry.Pin> pins = geometryPins((List<?>) readField(selectedMapArea, "f"));
             List<RouteMyListGeometry.ItemLocation> items = geometryItems(cachedPinItems);
             List<Integer> orderedIndexes = RouteMyListGeometry.orderIndexes(pois, pins, items);
-            if (orderedIndexes == null || orderedIndexes.size() != cachedPinItems.size()) return false;
+            if (orderedIndexes == null || orderedIndexes.size() != cachedPinItems.size()) {
+                Log.i(TAG, "Route My List geometry incomplete: pois=" + pois.size()
+                        + ", pins=" + pins.size() + ", items=" + items.size());
+                return false;
+            }
 
             previousPins = cachedPinItems;
             List<Object> reordered = RouteMyListGeometry.reorder(previousPins, orderedIndexes);
