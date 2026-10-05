@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.5...v1.2.0) (2026-10-05)
+
+### ✨ New Features
+
+* inject semi-transparent lines between route map pins ([0550c28](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/0550c28ec4d4ccc371fafd17ef6f1e622d02de5c))
+
 ## [1.1.5](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.4...v1.1.5) (2026-10-05)
 
 ### 🐛 Bug Fixes
