@@ -172,4 +172,33 @@ final class RouteMyListGeometry {
     private static String safe(String value) {
         return value == null ? "" : value;
     }
+
+    static String buildConnectorSvgPath(List<RouteOrderPlanner.Point> points) {
+        if (points == null || points.size() < 2) {
+            return "";
+        }
+        List<RouteOrderPlanner.Point> distinct = new ArrayList<>(points.size());
+        for (RouteOrderPlanner.Point pt : points) {
+            if (pt == null || !pt.isFinite()) continue;
+            if (distinct.isEmpty() || Math.hypot(pt.x - distinct.get(distinct.size() - 1).x,
+                                                 pt.y - distinct.get(distinct.size() - 1).y) > 0.5) {
+                distinct.add(pt);
+            }
+        }
+        if (distinct.size() < 2) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < distinct.size(); i++) {
+            RouteOrderPlanner.Point p = distinct.get(i);
+            if (i == 0) {
+                sb.append("M ");
+            } else {
+                sb.append(" L ");
+            }
+            sb.append(String.format(Locale.US, "%.1f %.1f", p.x, p.y));
+        }
+        return sb.toString();
+    }
+
 }

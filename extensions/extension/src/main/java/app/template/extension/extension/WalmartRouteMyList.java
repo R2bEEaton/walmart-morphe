@@ -25,6 +25,9 @@ import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -576,6 +579,11 @@ public class WalmartRouteMyList {
                     carousel.getClass().getMethod("smoothScrollToPosition", int.class)
                             .invoke(carousel, nextIndex);
                     Log.i(TAG, "Advanced Route My List to unchecked carousel item " + (nextIndex + 1));
+                    updateRouteConnectors(routeFragment);
+                    View candidateView = (View) callNoArg(routeFragment, "getView");
+                    if (candidateView != null) {
+                        candidateView.postDelayed(() -> updateRouteConnectors(routeFragment), 300L);
+                    }
                     return;
                 }
             }
@@ -1202,6 +1210,8 @@ public class WalmartRouteMyList {
         }
         webView.evaluateJavascript(script, null);
         Log.i(TAG, "RENDER_PINS_REQUESTED sent to the mounted map, primary index " + currentIndex);
+        injectRouteConnectors(cachedMapFragment, webView);
+        webView.postDelayed(() -> injectRouteConnectors(cachedMapFragment, webView), 300L);
     }
 
     /** Updates the locator Fragment's native item card without recreating that Fragment. */
@@ -1379,4 +1389,116 @@ public class WalmartRouteMyList {
         }
         return (a.length() - i) - (b.length() - j);
     }
+
+    private static void updateRouteConnectors(Object routeFragment) {
+        if (routeFragment == null) return;
+        try {
+            WebView webView = (WebView) routeFragment.getClass().getField("i").get(routeFragment);
+            if (webView != null) {
+                injectRouteConnectors(routeFragment, webView);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to update route connectors", t);
+        }
+    }
+
+    private static void injectRouteConnectors(Object routeFragment, WebView webView) {
+        if (routeFragment == null || webView == null || cachedPinItems == null || cachedPinItems.size() < 2) {
+            return;
+        }
+        try {
+            Set<String> checkedItemIds = new HashSet<>();
+            try {
+                Object binding = callNoArg(routeFragment, "Ve");
+                Object carouselBinding = readField(binding, "h");
+                Object carousel = readField(carouselBinding, "b");
+                Object adapter = readField(carousel, "a");
+                List<?> items = (List<?>) readField(adapter, "c");
+                if (items != null) {
+                    for (Object it : items) {
+                        Boolean isChecked = (Boolean) readField(it, "c");
+                        if (isChecked != null && isChecked) {
+                            Object itemDetails = readField(it, "a");
+                            String id = (String) readField(itemDetails, "b");
+                            if (id != null) checkedItemIds.add(id);
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            String storeId = getCurrentStoreId(cachedListFragment);
+            Class<?> pinOptionsCls = Class.forName("com.walmart.glass.instoremaps.api.PinOptions");
+            Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+            Class<?> itemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails");
+            Field pinOptionsField = pinItemCls.getField("a");
+            Field itemDetailsField = pinItemCls.getField("b");
+            Field aisleField = pinOptionsCls.getField("b");
+            Field zoneField = pinOptionsCls.getField("a");
+            Field sectionField = pinOptionsCls.getField("c");
+            Field itemIdField = itemDetailsCls.getField("b");
+
+            List<RouteOrderPlanner.Point> points = new ArrayList<>();
+            for (Object pinItem : cachedPinItems) {
+                Object itemDetails = itemDetailsField.get(pinItem);
+                String itemId = itemDetails != null ? (String) itemIdField.get(itemDetails) : null;
+                if (itemId != null && checkedItemIds.contains(itemId)) {
+                    continue;
+                }
+                Object pinOptions = pinOptionsField.get(pinItem);
+                String zone = (String) zoneField.get(pinOptions);
+                String aisle = (String) aisleField.get(pinOptions);
+                String section = (String) sectionField.get(pinOptions);
+                RouteOrderPlanner.Point pt = STORE_PIN_COORDINATES.get(storePinKey(storeId, zone, aisle, section));
+                if (pt != null && pt.isFinite()) {
+                    points.add(pt);
+                }
+            }
+
+            String dPath = RouteMyListGeometry.buildConnectorSvgPath(points);
+            String js = String.format(Locale.US,
+                    "(function(dPath){" +
+                    "  try {" +
+                    "    var svg = document.querySelector('.store-map-svg') || document.querySelector('svg');" +
+                    "    if (!svg) return;" +
+                    "    var existing = document.getElementById('route-my-list-connector');" +
+                    "    var d = dPath;" +
+                    "    if (!d || d.length === 0) {" +
+                    "      if (existing) existing.remove();" +
+                    "      return;" +
+                    "    }" +
+                    "    if (!existing) {" +
+                    "      existing = document.createElementNS('http://www.w3.org/2000/svg', 'path');" +
+                    "      existing.id = 'route-my-list-connector';" +
+                    "      existing.setAttribute('fill', 'none');" +
+                    "      existing.setAttribute('stroke', '#0071dc');" +
+                    "      existing.setAttribute('stroke-width', '14');" +
+                    "      existing.setAttribute('stroke-opacity', '0.45');" +
+                    "      existing.setAttribute('stroke-linecap', 'round');" +
+                    "      existing.setAttribute('stroke-linejoin', 'round');" +
+                    "      existing.setAttribute('stroke-dasharray', '28 18');" +
+                    "    }" +
+                    "    var container = svg.querySelector('.store-map-pins-container, .xy-pins-container');" +
+                    "    if (container) {" +
+                    "      if (existing.parentNode !== container) {" +
+                    "        container.insertBefore(existing, container.firstChild);" +
+                    "      }" +
+                    "    } else {" +
+                    "      var floor = svg.querySelector('#floor1') || svg.querySelector('g') || svg;" +
+                    "      if (existing.parentNode !== floor) {" +
+                    "        floor.appendChild(existing);" +
+                    "      }" +
+                    "    }" +
+                    "    existing.setAttribute('d', d);" +
+                    "  } catch(e) {" +
+                    "    console.error('route connector injection failed', e);" +
+                    "  }" +
+                    "})('%s');", dPath);
+
+            webView.evaluateJavascript(js, null);
+            Log.i(TAG, "Injected route connector line with " + points.size() + " stop(s), d=" + dPath);
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to inject route connector line", t);
+        }
+    }
+
 }

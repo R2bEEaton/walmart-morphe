@@ -122,4 +122,23 @@ public class RouteMyListGeometryIntegrationTest {
         assertEquals(Integer.valueOf(1), indexes.get(0));
     }
 
+
+    @Test
+    public void buildsConnectorSvgPathWithDeduplication() {
+        assertEquals("", RouteMyListGeometry.buildConnectorSvgPath(null));
+        assertEquals("", RouteMyListGeometry.buildConnectorSvgPath(Collections.emptyList()));
+        assertEquals("", RouteMyListGeometry.buildConnectorSvgPath(Collections.singletonList(
+                new RouteOrderPlanner.Point(100.0, 200.0))));
+
+        // Consecutive duplicates are skipped
+        List<RouteOrderPlanner.Point> points = Arrays.asList(
+                new RouteOrderPlanner.Point(100.0, 200.0),
+                new RouteOrderPlanner.Point(100.0, 200.0),
+                new RouteOrderPlanner.Point(150.5, 250.2),
+                new RouteOrderPlanner.Point(300.0, 400.0));
+
+        String svgPath = RouteMyListGeometry.buildConnectorSvgPath(points);
+        assertEquals("M 100.0 200.0 L 150.5 250.2 L 300.0 400.0", svgPath);
+    }
+
 }
