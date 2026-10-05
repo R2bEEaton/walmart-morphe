@@ -1,14 +1,13 @@
-group = "app.template"
+group = "com.r2beeaton.morphe"
 
 patches {
-    // TODO: Update this section with your project details.
     about {
-        name = "UserXYZ Patches"
-        description = "Patches for apps I like"
-        source = "git@github.com:UserXYZ/morphe-patches.git"
-        author = "Awesome dev"
-        contact = "na"
-        website = "na"
+        name = "R2bEEaton Walmart Route My List"
+        description = "Route My List enhancements for the Walmart Android app"
+        source = "https://github.com/R2bEEaton/walmart-route-my-list-morphe"
+        author = "R2bEEaton"
+        contact = "https://github.com/R2bEEaton"
+        website = "https://github.com/R2bEEaton/walmart-route-my-list-morphe"
         license = "GPLv3"
     }
 }
