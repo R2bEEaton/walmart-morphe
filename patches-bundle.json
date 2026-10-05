@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-10-05T15:52:17",
-  "description": "## [1.1.4](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.3...v1.1.4) (2026-10-05)\n\n### 🐛 Bug Fixes\n\n* synthesize entrance coordinates when native store POIs lack geometry ([9dda93c](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/9dda93ceb792cc2c064046fe96bf72f421c2d867))",
-  "download_url": "https://github.com/R2bEEaton/walmart-route-my-list-morphe/releases/download/v1.1.4/patches-1.1.4.mpp",
+  "created_at": "2026-10-05T16:26:20",
+  "description": "## [1.1.5](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.4...v1.1.5) (2026-10-05)\n\n### 🐛 Bug Fixes\n\n* focus carousel and camera on coordinate route start item ([4d999a1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/4d999a15f2d1da5815185d53eccfedde37c62148))",
+  "download_url": "https://github.com/R2bEEaton/walmart-route-my-list-morphe/releases/download/v1.1.5/patches-1.1.5.mpp",
   "signature_download_url": "",
-  "version": "1.1.4"
+  "version": "1.1.5"
 }

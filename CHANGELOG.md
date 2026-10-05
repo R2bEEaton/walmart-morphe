@@ -1,3 +1,9 @@
+## [1.1.5](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.4...v1.1.5) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* focus carousel and camera on coordinate route start item ([4d999a1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/4d999a15f2d1da5815185d53eccfedde37c62148))
+
 ## [1.1.4](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.3...v1.1.4) (2026-10-05)
 
 ### 🐛 Bug Fixes
