@@ -176,14 +176,19 @@ public class WalmartRouteMyList {
                 return false;
             }
 
-            List<RouteMyListGeometry.Poi> pois = geometryPois((List<?>) readField(mapDataReady, "b"));
+            List<?> rawPois = (List<?>) readField(mapDataReady, "b");
+            List<?> rawBoxes = (List<?>) readField(mapDataReady, "d");
+            List<RouteMyListGeometry.Poi> pois = geometryPois(rawPois);
             List<RouteMyListGeometry.Pin> pins = geometryPins((List<?>) readField(selectedMapArea, "f"));
             List<RouteMyListGeometry.ItemLocation> items = geometryItems(cachedPinItems);
             List<Integer> orderedIndexes = RouteMyListGeometry.orderIndexes(pois, pins, items);
             if (orderedIndexes == null || orderedIndexes.size() != cachedPinItems.size()) {
                 Log.i(TAG, "Route My List geometry incomplete: pois=" + pois.size()
                         + ", pins=" + pins.size() + ", items=" + items.size()
-                        + ", mapDataFields=" + describeCollectionFields(mapDataReady));
+                        + ", mapDataFields=" + describeCollectionFields(mapDataReady)
+                        + ", rawPois=" + describePois(rawPois)
+                        + ", rawBoxes=" + describeBoxes(rawBoxes)
+                        + ", pins=" + describePins(pins));
                 return false;
             }
 
@@ -326,6 +331,57 @@ public class WalmartRouteMyList {
             } catch (IllegalAccessException ignored) {
                 // Diagnostics must never affect the native route.
             }
+        }
+        return result.toString();
+    }
+
+    private static String describePois(List<?> rawPois) {
+        if (rawPois == null) return "null";
+        StringBuilder result = new StringBuilder();
+        for (Object poi : rawPois) {
+            if (poi == null) continue;
+            if (result.length() > 0) result.append(';');
+            try {
+                result.append(readField(poi, "a")).append('/')
+                        .append(readField(poi, "b")).append('/')
+                        .append(readField(poi, "c")).append(':')
+                        .append(readField(poi, "f")).append(',')
+                        .append(readField(poi, "g")).append(',')
+                        .append(readField(poi, "h")).append(',')
+                        .append(readField(poi, "i"));
+            } catch (Throwable t) {
+                result.append(poi);
+            }
+        }
+        return result.toString();
+    }
+
+    private static String describeBoxes(List<?> rawBoxes) {
+        if (rawBoxes == null) return "null";
+        StringBuilder result = new StringBuilder();
+        for (Object box : rawBoxes) {
+            if (box == null) continue;
+            if (result.length() > 0) result.append(';');
+            try {
+                result.append(readField(box, "a")).append(',')
+                        .append(readField(box, "b")).append(',')
+                        .append(readField(box, "c")).append(',')
+                        .append(readField(box, "d"));
+            } catch (Throwable t) {
+                result.append(box);
+            }
+        }
+        return result.toString();
+    }
+
+    private static String describePins(List<RouteMyListGeometry.Pin> pins) {
+        if (pins == null) return "null";
+        StringBuilder result = new StringBuilder();
+        for (RouteMyListGeometry.Pin pin : pins) {
+            if (pin == null) continue;
+            if (result.length() > 0) result.append(';');
+            result.append(pin.zone).append('-').append(pin.aisle).append('-').append(pin.section)
+                    .append('@').append(pin.center.x).append(',').append(pin.center.y);
         }
         return result.toString();
     }
