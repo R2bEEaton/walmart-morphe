@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.1...v1.1.2) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* inspect route map metadata ([b06b0ce](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/b06b0ce7de37664874f0e6d7fdba125aa19aade4))
+
 ## [1.1.1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.0...v1.1.1) (2026-10-05)
 
 ### 🐛 Bug Fixes
