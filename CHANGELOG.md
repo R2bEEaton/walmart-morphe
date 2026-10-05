@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.0.0...v1.0.1) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* publish remote metadata from main ([f3b1ded](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/f3b1ded0841f2f1dc320e5a6aabbdde4fde8fadc))
+
 ## 1.0.0 (2026-10-05)
 
 ### 🐛 Bug Fixes
