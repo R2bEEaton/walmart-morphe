@@ -90,4 +90,36 @@ public class RouteMyListGeometryIntegrationTest {
         assertEquals(Arrays.asList("second", "first"), RouteMyListGeometry.reorder(
                 Arrays.asList("first", "second"), Arrays.asList(1, 0)));
     }
+
+    @Test
+    public void ordersStartingAtClosestToFrontEntranceRegardlessOfOriginalItemOrder() {
+        // Front entrance is at max Y (507.5) and grocery entrance is at (117.0, 507.5).
+        // Original item order starts with Purolator (M-19 at 672.5, 450.5), but A-16 is closest to entrance.
+        List<RouteMyListGeometry.Pin> pins = Arrays.asList(
+                new RouteMyListGeometry.Pin("", "M-19", "4", new RouteOrderPlanner.Point(672.5, 450.5)),
+                new RouteMyListGeometry.Pin("", "A-16", "14", new RouteOrderPlanner.Point(117.0, 507.5)),
+                new RouteMyListGeometry.Pin("", "A-25", "9", new RouteOrderPlanner.Point(140.5, 464.0)),
+                new RouteMyListGeometry.Pin("", "A-28", "7", new RouteOrderPlanner.Point(149.5, 446.5)),
+                new RouteMyListGeometry.Pin("", "A-33", "30", new RouteOrderPlanner.Point(124.0, 380.5)),
+                new RouteMyListGeometry.Pin("", "J-31", "22", new RouteOrderPlanner.Point(684.5, 443.0)),
+                new RouteMyListGeometry.Pin("", "K-4", "4", new RouteOrderPlanner.Point(226.5, 461.0)));
+
+        List<RouteMyListGeometry.ItemLocation> items = Arrays.asList(
+                new RouteMyListGeometry.ItemLocation(0, "", "M-19", "4"),
+                new RouteMyListGeometry.ItemLocation(1, "", "A-16", "14"),
+                new RouteMyListGeometry.ItemLocation(2, "", "A-25", "9"),
+                new RouteMyListGeometry.ItemLocation(3, "", "A-28", "7"),
+                new RouteMyListGeometry.ItemLocation(4, "", "A-33", "30"),
+                new RouteMyListGeometry.ItemLocation(5, "", "J-31", "22"),
+                new RouteMyListGeometry.ItemLocation(6, "", "K-4", "4"));
+
+        List<Integer> indexes = RouteMyListGeometry.orderIndexes(
+                Collections.<RouteMyListGeometry.Poi>emptyList(), pins, items);
+
+        assertNotNull(indexes);
+        assertEquals(7, indexes.size());
+        // First index in the ordered tour MUST be 1 (A-16, closest to grocery entrance), NOT 0 (M-19)
+        assertEquals(Integer.valueOf(1), indexes.get(0));
+    }
+
 }
