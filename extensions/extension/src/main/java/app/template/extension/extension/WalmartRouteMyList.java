@@ -199,6 +199,7 @@ public class WalmartRouteMyList {
             List<View> allViews = new ArrayList<>();
             collectViews(root, allViews);
             hideRouteFeedbackPrompt(allViews);
+            collapseUnusedCarouselCardSpace(allViews);
             for (View candidate : allViews) {
                 if (!candidate.getClass().getName().endsWith("WcpButton")) continue;
                 if (!(candidate instanceof TextView)) continue;
@@ -220,6 +221,87 @@ public class WalmartRouteMyList {
                     "Give feedback".equals(text.trim())) {
                 view.setVisibility(View.GONE);
             }
+        }
+    }
+
+    /** Let the native Add-back action expand a carousel card only when it is actually rendered. */
+    private static void collapseUnusedCarouselCardSpace(List<View> views) {
+        for (View view : views) {
+            if (!(view instanceof ViewGroup) ||
+                    !hasResourceEntryName(view, "instoremaps_item_carousel_card_root")) continue;
+            ViewGroup card = (ViewGroup) view;
+            boolean addBackIsVisible = false;
+            for (int i = 0; i < card.getChildCount(); i++) {
+                View child = card.getChildAt(i);
+                if (hasResourceEntryName(child, "instoremaps_item_carousel_add_back_button")
+                        && child.getVisibility() == View.VISIBLE) {
+                    addBackIsVisible = true;
+                    break;
+                }
+            }
+            ViewGroup.LayoutParams params = card.getLayoutParams();
+            if (params == null) continue;
+            int desiredHeight = ViewGroup.LayoutParams.WRAP_CONTENT;
+            if (params.height != desiredHeight) {
+                params.height = desiredHeight;
+                card.setLayoutParams(params);
+            }
+            // The horizontal RecyclerView measures every item to its full carousel height.  The
+            // native card itself is a ConstraintLayout, whose maxHeight is honored after that
+            // parent measurement; it is the constraint that removes the otherwise blank area.
+            int contentBottom = 0;
+            for (int i = 0; i < card.getChildCount(); i++) {
+                View child = card.getChildAt(i);
+                if (child.getVisibility() == View.VISIBLE) {
+                    contentBottom = Math.max(contentBottom, child.getBottom());
+                }
+            }
+            setCardMaximumHeight(card, addBackIsVisible
+                    ? Integer.MAX_VALUE
+                    : contentBottom + dp(card, 16));
+            card.requestLayout();
+            final boolean hasAddBackAction = addBackIsVisible;
+            card.post(() -> {
+                // LinearLayoutManager top-aligns every carousel item. Compact cards must instead
+                // share the full card's bottom edge so neighboring cards do not appear to float.
+                int tallestAttachedCard = tallestAttachedCarouselCard(card);
+                float bottomAlignment = hasAddBackAction ? 0f
+                        : Math.max(0, tallestAttachedCard - card.getHeight());
+                card.setTranslationY(bottomAlignment);
+            });
+        }
+    }
+
+    private static int tallestAttachedCarouselCard(View card) {
+        if (!(card.getParent() instanceof ViewGroup)) return card.getHeight();
+        ViewGroup carousel = (ViewGroup) card.getParent();
+        int tallest = card.getHeight();
+        for (int i = 0; i < carousel.getChildCount(); i++) {
+            View sibling = carousel.getChildAt(i);
+            if (hasResourceEntryName(sibling, "instoremaps_item_carousel_card_root")) {
+                tallest = Math.max(tallest, sibling.getHeight());
+            }
+        }
+        return tallest;
+    }
+
+    private static void setCardMaximumHeight(View card, int maxHeight) {
+        try {
+            // Keep this reflective: the extension is compiled independently of Walmart's
+            // ConstraintLayout version, while the runtime method is stable across its releases.
+            card.getClass().getMethod("setMaxHeight", int.class).invoke(card, maxHeight);
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to adjust Route My List card maximum height", t);
+        }
+    }
+
+    private static boolean hasResourceEntryName(View view, String entryName) {
+        int id = view.getId();
+        if (id == View.NO_ID) return false;
+        try {
+            return entryName.equals(view.getResources().getResourceEntryName(id));
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
