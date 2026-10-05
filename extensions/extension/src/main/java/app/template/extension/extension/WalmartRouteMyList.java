@@ -140,6 +140,10 @@ public class WalmartRouteMyList {
      */
     public static void onNativeRouteMyListViewCreated(Object routeFragment) {
         try {
+            // Temporary: lets Chrome DevTools attach to the map WebView (chrome://inspect via
+            // adb forward) to debug the blank space above the floorplan from the live page's
+            // actual DOM/CSS instead of guessing. Remove once that's root-caused.
+            WebView.setWebContentsDebuggingEnabled(true);
             cachedMapFragment = routeFragment;
             Object viewModel = callNoArg(routeFragment, "cf");
             viewModel.getClass().getMethod("Me").invoke(viewModel);
@@ -148,12 +152,35 @@ public class WalmartRouteMyList {
             final long session = routeSessionId;
             tryApplyCoordinateRouteOrder(routeFragment, session);
             root.post(() -> waitForCoordinateRouteOrder(root, routeFragment, session, 0));
+            // Cached geometry can finish before the WebView even exists. Wait separately for
+            // the mounted SVG, and use its JS acknowledgement rather than assuming injection worked.
+            RouteMapReadyRetry.start(
+                    () -> session == routeSessionId && cachedMapFragment == routeFragment,
+                    retry -> root.postDelayed(retry, 250L),
+                    done -> {
+                        if (!coordinateOrderApplied) {
+                            done.accept(false);
+                            return;
+                        }
+                        try {
+                            WebView map = (WebView) routeFragment.getClass().getField("i").get(routeFragment);
+                            injectRouteConnectors(routeFragment, map, done);
+                        } catch (Throwable failure) {
+                            done.accept(false);
+                        }
+                    });
             if (!hasFlashRouteObserver(root)) {
                 rememberFlashRouteRoot(root);
                 root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
                 root.post(() -> compactNativeFlashButtons(root));
                 refreshRouteFlashCapabilityWhenReady(root, viewModel, 0);
             }
+            // Experimental: give the carousel card time to settle into its collapsed height
+            // (collapseUnusedCarouselCardSpace), then nudge the map to recompute its zoom-to-fit.
+            // The native camera-fit calculation appears to run once against whatever vertical
+            // space was reserved below the map at that time, leaving the floorplan rendered
+            // smaller than the viewport once the card shrinks. Unverified on real hardware.
+            root.postDelayed(WalmartRouteMyList::nudgeMapViewportResize, 500L);
             Log.i(TAG, "Native Route My List flash capability refresh requested");
         } catch (Throwable t) {
             // Flashing is an optional enhancement.  Do not interfere with the route if a future
@@ -263,6 +290,11 @@ public class WalmartRouteMyList {
             }
             Log.i(TAG, "Route My List reordered " + reordered.size()
                     + " item(s) from entrance-aware map geometry");
+            View routeView = (View) callNoArg(routeFragment, "getView");
+            if (routeView != null) {
+                routeView.post(() -> compactNativeFlashButtons(routeView));
+                routeView.postDelayed(WalmartRouteMyList::nudgeMapViewportResize, 400L);
+            }
             return true;
         } catch (Throwable t) {
             if (nativeStateMutated && viewModel != null) {
@@ -560,6 +592,16 @@ public class WalmartRouteMyList {
             List<?> items = (List<?>) readField(adapter, "c");
             if (items == null || items.isEmpty()) return;
 
+            // Also refresh after unchecking and after checking the final item, when there is
+            // no next unchecked card to advance to.
+            updateRouteConnectors(routeFragment);
+            View routeView = (View) callNoArg(routeFragment, "getView");
+            if (routeView != null) {
+                routeView.postDelayed(() -> {
+                    if (cachedMapFragment == routeFragment) updateRouteConnectors(routeFragment);
+                }, 300L);
+            }
+
             int completedIndex = -1;
             for (int index = 0; index < items.size(); index++) {
                 Object itemDetails = readField(items.get(index), "a");
@@ -579,17 +621,54 @@ public class WalmartRouteMyList {
                     carousel.getClass().getMethod("smoothScrollToPosition", int.class)
                             .invoke(carousel, nextIndex);
                     Log.i(TAG, "Advanced Route My List to unchecked carousel item " + (nextIndex + 1));
-                    updateRouteConnectors(routeFragment);
-                    View candidateView = (View) callNoArg(routeFragment, "getView");
-                    if (candidateView != null) {
-                        candidateView.postDelayed(() -> updateRouteConnectors(routeFragment), 300L);
-                    }
                     return;
                 }
             }
             Log.i(TAG, "All Route My List items are checked; leaving native completed state selected");
         } catch (Throwable t) {
             Log.w(TAG, "Unable to advance Route My List carousel", t);
+        }
+    }
+
+    /**
+     * Called when ItemCarouselView's swipe-settle focus change fires (W.invoke, installed via
+     * setOnItemFocused). This is the actual gesture a shopper uses to move between stops --
+     * unlike the Prev/Next bar this extension also defines (injectNavBar/step), which is never
+     * wired to any patch hook and so never renders. Advances currentIndex to match and redraws
+     * the route connector so legs already walked grey out as the shopper swipes forward.
+     */
+    public static void onCarouselItemFocused(Object focusedCarouselItem) {
+        try {
+            Log.i(TAG, "onCarouselItemFocused: fired, cachedPinItems=" +
+                    (cachedPinItems == null ? "null" : cachedPinItems.size()) +
+                    ", cachedMapFragment=" + (cachedMapFragment != null));
+            if (cachedPinItems == null || cachedMapFragment == null) return;
+            Object itemDetails = readField(focusedCarouselItem, "a");
+            String itemId = (String) readField(itemDetails, "b");
+            if (itemId == null) return;
+
+            int matchedIndex = -1;
+            for (int i = 0; i < cachedPinItems.size(); i++) {
+                Object pinItemDetails = readField(cachedPinItems.get(i), "b");
+                if (itemId.equals(readField(pinItemDetails, "b"))) {
+                    matchedIndex = i;
+                    currentIndex = i;
+                    break;
+                }
+            }
+            Log.i(TAG, "onCarouselItemFocused: itemId=" + itemId + " matchedIndex=" + matchedIndex);
+
+            WebView map = null;
+            try {
+                map = (WebView) cachedMapFragment.getClass().getField("i").get(cachedMapFragment);
+            } catch (Throwable ignored) {
+                map = (WebView) readField(cachedMapFragment, "i");
+            }
+            if (map != null) {
+                injectRouteConnectors(cachedMapFragment, map);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to advance currentIndex from carousel focus change", t);
         }
     }
 
@@ -616,6 +695,7 @@ public class WalmartRouteMyList {
             List<View> allViews = new ArrayList<>();
             collectViews(root, allViews);
             hideRouteFeedbackPrompt(allViews);
+            hideResumeRouteButton(allViews);
             collapseUnusedCarouselCardSpace(allViews);
             for (View candidate : allViews) {
                 if (!candidate.getClass().getName().endsWith("WcpButton")) continue;
@@ -637,6 +717,43 @@ public class WalmartRouteMyList {
             if (text.startsWith("We'd love to hear what you think!") ||
                     "Give feedback".equals(text.trim())) {
                 view.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    /** See the comment at its one call site in onNativeRouteMyListViewCreated. */
+    private static void nudgeMapViewportResize() {
+        if (cachedMapFragment == null) return;
+        try {
+            WebView map = (WebView) cachedMapFragment.getClass().getField("i").get(cachedMapFragment);
+            if (map == null) return;
+            map.post(() -> map.evaluateJavascript(
+                    "(function(){window.dispatchEvent(new Event('resize'));return true;})();",
+                    result -> Log.i(TAG, "Map viewport resize nudge dispatched: " + result)));
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to nudge map viewport resize", t);
+        }
+    }
+
+    /**
+     * Hides Walmart's native "Resume route" prompt (R.id.instoremaps_resume_route /
+     * instoremaps_resume_route_button). It decides whether to show itself by comparing against
+     * Walmart's own naive aisle-order bookkeeping, which our coordinate reorder in
+     * tryApplyCoordinateRouteOrder doesn't feed back into — so once our reorder has taken over
+     * and already started the route at the nearest-to-entrance stop, the prompt is always stale
+     * (it can fire even when the shopper is already exactly where the reordered route says they
+     * should be). Only suppress it once our own ordering is active; before that, native's aisle
+     * order is still what's showing, so its own resume logic is still meaningful.
+     */
+    private static void hideResumeRouteButton(List<View> views) {
+        if (!coordinateOrderApplied) {
+            return;
+        }
+        for (View view : views) {
+            if (hasResourceEntryName(view, "instoremaps_resume_route_button")
+                    || hasResourceEntryName(view, "instoremaps_resume_route")) {
+                view.setVisibility(View.GONE);
+                Log.i(TAG, "hideResumeRouteButton: set GONE on " + view.getClass().getSimpleName());
             }
         }
     }
@@ -823,15 +940,32 @@ public class WalmartRouteMyList {
     }
 
     private static Object readField(Object target, String name) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target);
+        Class<?> current = target.getClass();
+        while (current != null) {
+            try {
+                Field field = current.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (NoSuchFieldException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException("No field " + name + " in " + target.getClass() + " or superclasses");
     }
 
     private static void writeField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
+        Class<?> current = target.getClass();
+        while (current != null) {
+            try {
+                Field field = current.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(target, value);
+                return;
+            } catch (NoSuchFieldException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException("No field " + name + " in " + target.getClass() + " or superclasses");
     }
 
     /**
@@ -1403,7 +1537,13 @@ public class WalmartRouteMyList {
     }
 
     private static void injectRouteConnectors(Object routeFragment, WebView webView) {
+        injectRouteConnectors(routeFragment, webView, ready -> {});
+    }
+
+    private static void injectRouteConnectors(Object routeFragment, WebView webView,
+                                              java.util.function.Consumer<Boolean> done) {
         if (routeFragment == null || webView == null || cachedPinItems == null || cachedPinItems.size() < 2) {
+            done.accept(false);
             return;
         }
         try {
@@ -1426,7 +1566,6 @@ public class WalmartRouteMyList {
                 }
             } catch (Throwable ignored) {}
 
-            String storeId = getCurrentStoreId(cachedListFragment);
             Class<?> pinOptionsCls = Class.forName("com.walmart.glass.instoremaps.api.PinOptions");
             Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
             Class<?> itemDetailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails");
@@ -1437,67 +1576,109 @@ public class WalmartRouteMyList {
             Field sectionField = pinOptionsCls.getField("c");
             Field itemIdField = itemDetailsCls.getField("b");
 
-            List<RouteOrderPlanner.Point> points = new ArrayList<>();
-            for (Object pinItem : cachedPinItems) {
+            org.json.JSONArray stops = new org.json.JSONArray();
+            // Position of cachedPinItems.get(currentIndex) within the filtered (unchecked) stops
+            // below, so the JS can grey out legs already walked. -1 if the focused item has no
+            // match here (e.g. it was just checked off), in which case nothing is greyed.
+            int activeStopIndex = -1;
+            for (int i = 0; i < cachedPinItems.size(); i++) {
+                Object pinItem = cachedPinItems.get(i);
                 Object itemDetails = itemDetailsField.get(pinItem);
                 String itemId = itemDetails != null ? (String) itemIdField.get(itemDetails) : null;
                 if (itemId != null && checkedItemIds.contains(itemId)) {
                     continue;
                 }
+                if (i == currentIndex) {
+                    activeStopIndex = stops.length();
+                }
                 Object pinOptions = pinOptionsField.get(pinItem);
                 String zone = (String) zoneField.get(pinOptions);
                 String aisle = (String) aisleField.get(pinOptions);
                 String section = (String) sectionField.get(pinOptions);
-                RouteOrderPlanner.Point pt = STORE_PIN_COORDINATES.get(storePinKey(storeId, zone, aisle, section));
-                if (pt != null && pt.isFinite()) {
-                    points.add(pt);
-                }
+                org.json.JSONObject stop = new org.json.JSONObject();
+                stop.put("zone", zone == null ? "" : zone);
+                stop.put("aisle", aisle == null ? "" : aisle);
+                stop.put("section", section == null ? "" : section);
+                stops.put(stop);
             }
 
-            String dPath = RouteMyListGeometry.buildConnectorSvgPath(points);
             String js = String.format(Locale.US,
-                    "(function(dPath){" +
+                    "(function(stops, active){" +
                     "  try {" +
                     "    var svg = document.querySelector('.store-map-svg') || document.querySelector('svg');" +
-                    "    if (!svg) return;" +
+                    "    if (!svg) return false;" +
+                    "    if (svg.__routeConnectorObserver) svg.__routeConnectorObserver.disconnect();" +
+                    "    function draw() {" +
                     "    var existing = document.getElementById('route-my-list-connector');" +
-                    "    var d = dPath;" +
-                    "    if (!d || d.length === 0) {" +
-                    "      if (existing) existing.remove();" +
-                    "      return;" +
+                    "    var groups = Array.from(svg.querySelectorAll('.pin-group'));" +
+                    "    var points = [];" +
+                    "    function matches(data, stop) {" +
+                    "      return data && ['zone','aisle','section'].every(function(k){ return String(data[k] == null ? '' : data[k]).toUpperCase() === String(stop[k]).toUpperCase(); });" +
                     "    }" +
-                    "    if (!existing) {" +
-                    "      existing = document.createElementNS('http://www.w3.org/2000/svg', 'path');" +
-                    "      existing.id = 'route-my-list-connector';" +
-                    "      existing.setAttribute('fill', 'none');" +
-                    "      existing.setAttribute('stroke', '#0071dc');" +
-                    "      existing.setAttribute('stroke-width', '14');" +
-                    "      existing.setAttribute('stroke-opacity', '0.45');" +
-                    "      existing.setAttribute('stroke-linecap', 'round');" +
-                    "      existing.setAttribute('stroke-linejoin', 'round');" +
-                    "      existing.setAttribute('stroke-dasharray', '28 18');" +
+                    "    for (var stop of stops) {" +
+                    "      var pin = groups.find(function(g) {" +
+                    "        var data = g.data && g.data.data;" +
+                    "        return matches(data,stop) || (data && (data.groupedPins || []).some(function(p){return matches(p,stop);}));" +
+                    "      });" +
+                    "      if (!pin) return false;" +
+                    "      var anchor = pin.style.transformOrigin.split(/\\s+/).map(parseFloat);" +
+                    "      if (!Number.isFinite(anchor[0]) || !Number.isFinite(anchor[1])) return false;" +
+                    "      if (!points.length || points[points.length-1][0] !== anchor[0] || points[points.length-1][1] !== anchor[1]) points.push(anchor);" +
+                    "    }" +
+                    "    if (points.length < 2) {" +
+                    "      if (existing) existing.remove();" +
+                    "      return true;" +
                     "    }" +
                     "    var container = svg.querySelector('.store-map-pins-container, .xy-pins-container');" +
-                    "    if (container) {" +
-                    "      if (existing.parentNode !== container) {" +
-                    "        container.insertBefore(existing, container.firstChild);" +
-                    "      }" +
-                    "    } else {" +
-                    "      var floor = svg.querySelector('#floor1') || svg.querySelector('g') || svg;" +
-                    "      if (existing.parentNode !== floor) {" +
-                    "        floor.appendChild(existing);" +
-                    "      }" +
+                    "    if (!container) return false;" +
+                    "    if (!existing) {" +
+                    "      existing = document.createElementNS('http://www.w3.org/2000/svg', 'g');" +
+                    "      existing.id = 'route-my-list-connector';" +
                     "    }" +
-                    "    existing.setAttribute('d', d);" +
+                    "    if (existing.parentNode !== container) {" +
+                    "      container.insertBefore(existing, container.firstChild);" +
+                    "    }" +
+                    "    var legCount = points.length - 1;" +
+                    "    while (existing.childNodes.length > legCount) existing.removeChild(existing.lastChild);" +
+                    "    while (existing.childNodes.length < legCount) {" +
+                    "      var newLeg = document.createElementNS('http://www.w3.org/2000/svg', 'path');" +
+                    "      newLeg.setAttribute('fill', 'none');" +
+                    "      newLeg.setAttribute('pointer-events', 'none');" +
+                    "      newLeg.setAttribute('stroke-width', '14');" +
+                    "      newLeg.setAttribute('stroke-linecap', 'round');" +
+                    "      newLeg.setAttribute('stroke-linejoin', 'round');" +
+                    "      newLeg.setAttribute('stroke-dasharray', '28 18');" +
+                    "      existing.appendChild(newLeg);" +
+                    "    }" +
+                    "    for (var i = 0; i < legCount; i++) {" +
+                    "      var leg = existing.childNodes[i];" +
+                    "      var complete = active >= 0 && (i + 1) < active;" +
+                    "      leg.setAttribute('stroke', complete ? '#8a93a3' : '#0071dc');" +
+                    "      leg.setAttribute('stroke-opacity', complete ? '0.35' : '0.45');" +
+                    "      leg.setAttribute('d', 'M ' + points[i][0] + ' ' + points[i][1] + ' L ' + points[i+1][0] + ' ' + points[i+1][1]);" +
+                    "    }" +
+                    "    return true;" +
+                    "    }" +
+                    "    var ready = draw();" +
+                    "    if (ready && stops.length > 1) {" +
+                    "      svg.__routeConnectorObserver = new MutationObserver(draw);" +
+                    "      svg.__routeConnectorObserver.observe(svg, {childList:true, subtree:true});" +
+                    "    }" +
+                    "    return ready;" +
                     "  } catch(e) {" +
                     "    console.error('route connector injection failed', e);" +
+                    "    return false;" +
                     "  }" +
-                    "})('%s');", dPath);
+                    "})(%s, %d);", stops.toString(), activeStopIndex);
 
-            webView.evaluateJavascript(js, null);
-            Log.i(TAG, "Injected route connector line with " + points.size() + " stop(s), d=" + dPath);
+            webView.evaluateJavascript(js, result -> {
+                boolean ready = "true".equals(result);
+                if (ready) Log.i(TAG, "Rendered route connector with " + stops.length() + " stop(s)");
+                done.accept(ready);
+            });
         } catch (Throwable t) {
             Log.w(TAG, "Unable to inject route connector line", t);
+            done.accept(false);
         }
     }
 

@@ -77,6 +77,19 @@ object NativeRouteMyListCheckboxFingerprint : Fingerprint(
     parameters = listOf("Lcom/walmart/glass/instoremaps/model/c;", "Landroid/view/View;"),
 )
 
+// W is the Function2<ItemCarouselItem, ItemCarouselItem, Unit> installed via
+// itemCarouselView.setOnItemFocused(new W(this)) in InStoreMapsMultiItemLocatorFragment.
+// ItemCarouselView invokes it (leaving, current) only once the carousel's scroll has settled on
+// a genuinely different card -- the same swipe gesture a shopper actually uses to move through
+// their route, unlike the orphaned Prev/Next bar this extension also defines but never wires up.
+object ItemCarouselFocusChangedFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/view/W;",
+    name = "invoke",
+    accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
+    returnType = "Ljava/lang/Object;",
+    parameters = listOf("Ljava/lang/Object;", "Ljava/lang/Object;"),
+)
+
 val routeMyListPatch = bytecodePatch(
     name = "Route My List",
     description = "Adds a 'Plan my route' button to the Walmart shopping list screen that opens " +
@@ -137,5 +150,14 @@ val routeMyListPatch = bytecodePatch(
             "invoke-static/range {p0 .. p0}, $EXTENSION_CLASS->onNativeRouteCheckboxToggled(Ljava/lang/Object;)V",
         )
 
+        // p2 is the newly-focused ItemCarouselItem (invoke is an instance method: p0=this,
+        // p1=leaving, p2=current). This method has 29 registers, putting p2 at v28 -- past the
+        // four-bit short-invoke range (v0-v15) -- so use the range form, same as the large
+        // fragment hooked above.
+        val focusMethod = ItemCarouselFocusChangedFingerprint.method
+        focusMethod.addInstructions(
+            focusMethod.instructions.size - 1,
+            "invoke-static/range {p2 .. p2}, $EXTENSION_CLASS->onCarouselItemFocused(Ljava/lang/Object;)V",
+        )
     }
 }
