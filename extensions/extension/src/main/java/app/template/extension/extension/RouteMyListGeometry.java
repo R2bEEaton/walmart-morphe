@@ -76,9 +76,36 @@ final class RouteMyListGeometry {
         return entrances;
     }
 
+    static List<RouteOrderPlanner.Entrance> fallbackEntrances(List<Pin> pins) {
+        List<RouteOrderPlanner.Entrance> entrances = new ArrayList<>();
+        if (pins == null || pins.isEmpty()) return entrances;
+        double minX = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        int validCount = 0;
+        for (Pin pin : pins) {
+            if (pin == null || pin.center == null || !pin.center.isFinite()) continue;
+            validCount++;
+            if (pin.center.x < minX) minX = pin.center.x;
+            if (pin.center.x > maxX) maxX = pin.center.x;
+            if (pin.center.y > maxY) maxY = pin.center.y;
+        }
+        if (validCount == 0) return entrances;
+        // In Walmart store maps, entrances and checkouts are along the front (maximum Y).
+        // Provide standard front entrances: Grocery entrance (left), GM entrance (right),
+        // and Center entrance (midpoint).
+        entrances.add(new RouteOrderPlanner.Entrance("grocery_entrance", new RouteOrderPlanner.Point(minX, maxY)));
+        entrances.add(new RouteOrderPlanner.Entrance("main_entrance", new RouteOrderPlanner.Point((minX + maxX) / 2d, maxY)));
+        entrances.add(new RouteOrderPlanner.Entrance("gm_entrance", new RouteOrderPlanner.Point(maxX, maxY)));
+        return entrances;
+    }
+
     static List<Integer> orderIndexes(List<Poi> pois, List<Pin> pins, List<ItemLocation> items) {
         if (items == null || items.size() < 2) return null;
         List<RouteOrderPlanner.Entrance> entrances = entrancesFromPois(pois);
+        if (entrances.isEmpty()) {
+            entrances = fallbackEntrances(pins);
+        }
         if (entrances.isEmpty()) return null;
         Map<String, ArrayDeque<RouteOrderPlanner.Point>> pinsByLocation = new HashMap<>();
         if (pins != null) {
@@ -98,7 +125,8 @@ final class RouteMyListGeometry {
             if (item == null) return null;
             ArrayDeque<RouteOrderPlanner.Point> centers = pinsByLocation.get(key(item.zone, item.aisle, item.section));
             if (centers == null || centers.isEmpty()) return null;
-            stops.add(new RouteOrderPlanner.Stop(item.originalIndex, centers.removeFirst()));
+            RouteOrderPlanner.Point point = centers.size() > 1 ? centers.removeFirst() : centers.peekFirst();
+            stops.add(new RouteOrderPlanner.Stop(item.originalIndex, point));
         }
         RouteOrderPlanner.Result result = RouteOrderPlanner.optimize(entrances, stops);
         return result == null ? null : result.orderedOriginalIndexes;

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 public class RouteMyListGeometryIntegrationTest {
@@ -50,6 +51,36 @@ public class RouteMyListGeometryIntegrationTest {
                 Collections.singletonList(new RouteMyListGeometry.Poi("Entrance", null, 0, 0, 0, 0)),
                 Collections.singletonList(new RouteMyListGeometry.Pin("zone", "A1", "1",
                         new RouteOrderPlanner.Point(1, 1))), items));
+    }
+
+    @Test
+    public void usesFallbackFrontEntrancesWhenPoisDoNotContainEntrances() {
+        // Pins from live Walmart store capture
+        List<RouteMyListGeometry.Pin> pins = Arrays.asList(
+                new RouteMyListGeometry.Pin("", "A-16", "14", new RouteOrderPlanner.Point(117.0, 507.5)),
+                new RouteMyListGeometry.Pin("", "A-25", "9", new RouteOrderPlanner.Point(140.5, 464.0)),
+                new RouteMyListGeometry.Pin("", "A-28", "7", new RouteOrderPlanner.Point(149.5, 446.5)),
+                new RouteMyListGeometry.Pin("", "A-33", "30", new RouteOrderPlanner.Point(124.0, 380.5)),
+                new RouteMyListGeometry.Pin("", "J-31", "22", new RouteOrderPlanner.Point(684.5, 443.0)),
+                new RouteMyListGeometry.Pin("", "K-4", "4", new RouteOrderPlanner.Point(226.5, 461.0)),
+                new RouteMyListGeometry.Pin("", "M-19", "4", new RouteOrderPlanner.Point(672.5, 450.5)));
+
+        List<RouteMyListGeometry.ItemLocation> items = Arrays.asList(
+                new RouteMyListGeometry.ItemLocation(0, "", "A-16", "14"),
+                new RouteMyListGeometry.ItemLocation(1, "", "A-25", "9"),
+                new RouteMyListGeometry.ItemLocation(2, "", "A-28", "7"),
+                new RouteMyListGeometry.ItemLocation(3, "", "A-33", "30"),
+                new RouteMyListGeometry.ItemLocation(4, "", "J-31", "22"),
+                new RouteMyListGeometry.ItemLocation(5, "", "K-4", "4"),
+                new RouteMyListGeometry.ItemLocation(6, "", "M-19", "4"));
+
+        List<Integer> indexes = RouteMyListGeometry.orderIndexes(
+                Collections.<RouteMyListGeometry.Poi>emptyList(), pins, items);
+
+        assertNotNull(indexes);
+        assertEquals(7, indexes.size());
+        // Starts at front grocery (A-16), progresses up grocery to back (A-33), loops through GM (J-31, M-19) and center (K-4)
+        assertEquals(Arrays.asList(0, 1, 2, 3, 4, 6, 5), indexes);
     }
 
     @Test
