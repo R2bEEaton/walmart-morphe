@@ -1,3 +1,14 @@
+## [1.1.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.0.1...v1.1.0) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* synchronize native Route My List order ([46b9b3d](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/46b9b3dc103af8f97c26ce49a5ef1b434c2266bc))
+
+### ✨ New Features
+
+* optimize Route My List by map coordinates ([767ab02](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/767ab02d90669571ffed8cc0a9cc3593be96eda6))
+* order Route My List from native map geometry ([2387dda](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/2387dda0d1ba42dbda792989c57378fcdd6509eb))
+
 ## [1.0.1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.0.0...v1.0.1) (2026-10-05)
 
 ### 🐛 Bug Fixes
