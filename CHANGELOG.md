@@ -1,3 +1,9 @@
+## [1.1.4](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.3...v1.1.4) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* synthesize entrance coordinates when native store POIs lack geometry ([9dda93c](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/9dda93ceb792cc2c064046fe96bf72f421c2d867))
+
 ## [1.1.3](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.2...v1.1.3) (2026-10-05)
 
 ### 🐛 Bug Fixes
