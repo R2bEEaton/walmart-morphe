@@ -51,4 +51,12 @@ public class RouteMyListGeometryIntegrationTest {
                 Collections.singletonList(new RouteMyListGeometry.Pin("zone", "A1", "1",
                         new RouteOrderPlanner.Point(1, 1))), items));
     }
+
+    @Test
+    public void rejectsIncompletePermutationBeforeMutatingNativeRouteState() {
+        assertNull(RouteMyListGeometry.reorder(Arrays.asList("first", "second"),
+                Collections.singletonList(1)));
+        assertEquals(Arrays.asList("second", "first"), RouteMyListGeometry.reorder(
+                Arrays.asList("first", "second"), Arrays.asList(1, 0)));
+    }
 }

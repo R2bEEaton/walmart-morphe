@@ -104,6 +104,19 @@ final class RouteMyListGeometry {
         return result == null ? null : result.orderedOriginalIndexes;
     }
 
+    /** Applies a complete, validated permutation or returns null without changing the input list. */
+    static <T> List<T> reorder(List<T> source, List<Integer> indexes) {
+        if (source == null || indexes == null || source.size() != indexes.size()) return null;
+        boolean[] used = new boolean[source.size()];
+        List<T> reordered = new ArrayList<>();
+        for (Integer index : indexes) {
+            if (index == null || index < 0 || index >= source.size() || used[index]) return null;
+            used[index] = true;
+            reordered.add(source.get(index));
+        }
+        return reordered;
+    }
+
     private static boolean isEntrance(Poi poi) {
         String label = normalizedLabel(poi);
         return label.contains("entrance") || label.contains(" entry") || label.startsWith("entry ");
