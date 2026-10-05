@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-10-05T13:59:14",
-  "description": "## [1.1.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.0.1...v1.1.0) (2026-10-05)\n\n### 🐛 Bug Fixes\n\n* synchronize native Route My List order ([46b9b3d](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/46b9b3dc103af8f97c26ce49a5ef1b434c2266bc))\n\n### ✨ New Features\n\n* optimize Route My List by map coordinates ([767ab02](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/767ab02d90669571ffed8cc0a9cc3593be96eda6))\n* order Route My List from native map geometry ([2387dda](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/2387dda0d1ba42dbda792989c57378fcdd6509eb))",
-  "download_url": "https://github.com/R2bEEaton/walmart-route-my-list-morphe/releases/download/v1.1.0/patches-1.1.0.mpp",
+  "created_at": "2026-10-05T14:37:34",
+  "description": "## [1.1.1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.0...v1.1.1) (2026-10-05)\n\n### 🐛 Bug Fixes\n\n* publish route geometry diagnostics ([3fe4eb5](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/3fe4eb575df779f04bcf68a8c40c455771389f94))",
+  "download_url": "https://github.com/R2bEEaton/walmart-route-my-list-morphe/releases/download/v1.1.1/patches-1.1.1.mpp",
   "signature_download_url": "",
-  "version": "1.1.0"
+  "version": "1.1.1"
 }

@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.0...v1.1.1) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* publish route geometry diagnostics ([3fe4eb5](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/3fe4eb575df779f04bcf68a8c40c455771389f94))
+
 ## [1.1.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.0.1...v1.1.0) (2026-10-05)
 
 ### 🐛 Bug Fixes
