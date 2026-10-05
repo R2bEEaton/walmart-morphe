@@ -182,7 +182,8 @@ public class WalmartRouteMyList {
             List<Integer> orderedIndexes = RouteMyListGeometry.orderIndexes(pois, pins, items);
             if (orderedIndexes == null || orderedIndexes.size() != cachedPinItems.size()) {
                 Log.i(TAG, "Route My List geometry incomplete: pois=" + pois.size()
-                        + ", pins=" + pins.size() + ", items=" + items.size());
+                        + ", pins=" + pins.size() + ", items=" + items.size()
+                        + ", mapDataFields=" + describeCollectionFields(mapDataReady));
                 return false;
             }
 
@@ -311,6 +312,22 @@ public class WalmartRouteMyList {
 
     private static Double asDouble(Object value) {
         return value instanceof Number ? ((Number) value).doubleValue() : null;
+    }
+
+    private static String describeCollectionFields(Object value) {
+        StringBuilder result = new StringBuilder();
+        for (Field field : value.getClass().getFields()) {
+            try {
+                Object fieldValue = field.get(value);
+                if (fieldValue instanceof List<?>) {
+                    if (result.length() > 0) result.append(',');
+                    result.append(field.getName()).append('=').append(((List<?>) fieldValue).size());
+                }
+            } catch (IllegalAccessException ignored) {
+                // Diagnostics must never affect the native route.
+            }
+        }
+        return result.toString();
     }
 
     /**
