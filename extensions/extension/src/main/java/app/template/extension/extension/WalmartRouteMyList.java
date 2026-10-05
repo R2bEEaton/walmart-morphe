@@ -57,6 +57,8 @@ public class WalmartRouteMyList {
     private static List<Object> cachedPinItems;
     private static int currentIndex = 0;
     private static View navOverlayView;
+    private static long routeSessionId = 0L;
+    private static boolean coordinateOrderApplied = false;
 
     // Retain neither a Fragment nor a View: Route My List fragments are short lived and its
     // carousel is rebuilt as the shopper checks items off.  Weak references only prevent us from
@@ -86,6 +88,8 @@ public class WalmartRouteMyList {
             cachedListFragment = listDetailFragment;
             cachedPinItems = computeSortedPinItems(listDetailFragment);
             currentIndex = 0;
+            routeSessionId++;
+            coordinateOrderApplied = false;
             showNativeRouteMyList();
         } catch (Throwable t) {
             Log.e(TAG, "Route My List failed", t);
@@ -107,20 +111,137 @@ public class WalmartRouteMyList {
      */
     public static void onNativeRouteMyListViewCreated(Object routeFragment) {
         try {
+            cachedMapFragment = routeFragment;
             Object viewModel = callNoArg(routeFragment, "cf");
             viewModel.getClass().getMethod("Me").invoke(viewModel);
             View root = (View) callNoArg(routeFragment, "getView");
-            if (root == null || hasFlashRouteObserver(root)) return;
-            rememberFlashRouteRoot(root);
-            root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
-            root.post(() -> compactNativeFlashButtons(root));
-            refreshRouteFlashCapabilityWhenReady(root, viewModel, 0);
+            if (root == null) return;
+            final long session = routeSessionId;
+            waitForCoordinateRouteOrder(root, routeFragment, session, 0);
+            if (!hasFlashRouteObserver(root)) {
+                rememberFlashRouteRoot(root);
+                root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
+                root.post(() -> compactNativeFlashButtons(root));
+                refreshRouteFlashCapabilityWhenReady(root, viewModel, 0);
+            }
             Log.i(TAG, "Native Route My List flash capability refresh requested");
         } catch (Throwable t) {
             // Flashing is an optional enhancement.  Do not interfere with the route if a future
             // Walmart release changes this private view-model API.
             Log.w(TAG, "Unable to initialize Route My List flash control", t);
         }
+    }
+
+    /** Waits for Walmart's map-ready metadata and rendered pin rectangles without reopening it. */
+    private static void waitForCoordinateRouteOrder(View root, Object routeFragment, long session, int attempt) {
+        if (!root.isAttachedToWindow() || session != routeSessionId || coordinateOrderApplied) return;
+        if (tryApplyCoordinateRouteOrder(routeFragment, session)) return;
+        if (attempt >= 12) {
+            Log.i(TAG, "Route My List geometry was unavailable; retaining aisle order");
+            return;
+        }
+        root.postDelayed(() -> waitForCoordinateRouteOrder(root, routeFragment, session, attempt + 1), 250L);
+    }
+
+    /**
+     * Converts Walmart's private map state to the pure route planner input.  Reflection failures
+     * deliberately leave the already-open native route untouched so aisle order remains usable.
+     */
+    static boolean tryApplyCoordinateRouteOrder(Object routeFragment, long session) {
+        if (session != routeSessionId || coordinateOrderApplied || cachedPinItems == null
+                || cachedPinItems.size() < 2 || routeFragment != cachedMapFragment) return false;
+        try {
+            Object viewModel = callNoArg(routeFragment, "cf");
+            Object mapDataReady = readField(viewModel, "Y");
+            Object selectedMapArea = readField(viewModel, "Z");
+            if (mapDataReady == null || selectedMapArea == null) return false;
+
+            List<RouteMyListGeometry.Poi> pois = geometryPois((List<?>) readField(mapDataReady, "b"));
+            List<RouteMyListGeometry.Pin> pins = geometryPins((List<?>) readField(selectedMapArea, "f"));
+            List<RouteMyListGeometry.ItemLocation> items = geometryItems(cachedPinItems);
+            List<Integer> orderedIndexes = RouteMyListGeometry.orderIndexes(pois, pins, items);
+            if (orderedIndexes == null || orderedIndexes.size() != cachedPinItems.size()) return false;
+
+            List<Object> previous = cachedPinItems;
+            List<Object> reordered = new ArrayList<>();
+            for (int index : orderedIndexes) {
+                if (index < 0 || index >= previous.size()) return false;
+                reordered.add(previous.get(index));
+            }
+            if (reordered.equals(previous)) {
+                coordinateOrderApplied = true;
+                return true;
+            }
+            cachedPinItems = reordered;
+            currentIndex = 0;
+            coordinateOrderApplied = true;
+            try {
+                renderMountedMapWithFocusedPin();
+                updateMountedItemCard();
+            } catch (Throwable renderFailure) {
+                cachedPinItems = previous;
+                coordinateOrderApplied = false;
+                throw renderFailure;
+            }
+            Log.i(TAG, "Route My List reordered " + reordered.size()
+                    + " item(s) from entrance-aware map geometry");
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to apply Route My List coordinate order", t);
+            return false;
+        }
+    }
+
+    private static List<RouteMyListGeometry.Poi> geometryPois(List<?> rawPois) throws Exception {
+        List<RouteMyListGeometry.Poi> pois = new ArrayList<>();
+        if (rawPois == null) return pois;
+        for (Object poi : rawPois) {
+            Double minX = asDouble(readField(poi, "f"));
+            Double maxX = asDouble(readField(poi, "g"));
+            Double minY = asDouble(readField(poi, "h"));
+            Double maxY = asDouble(readField(poi, "i"));
+            if (minX == null || maxX == null || minY == null || maxY == null) continue;
+            pois.add(new RouteMyListGeometry.Poi((String) readField(poi, "a"),
+                    (String) readField(poi, "b"), minX, maxX, minY, maxY));
+        }
+        return pois;
+    }
+
+    private static List<RouteMyListGeometry.Pin> geometryPins(List<?> rawPins) throws Exception {
+        List<RouteMyListGeometry.Pin> pins = new ArrayList<>();
+        if (rawPins == null) return pins;
+        for (Object pin : rawPins) {
+            Object pinRect = readField(pin, "i");
+            Object center = pinRect == null ? null : readField(pinRect, "a");
+            Double x = center == null ? null : asDouble(readField(center, "a"));
+            Double y = center == null ? null : asDouble(readField(center, "b"));
+            if (x == null || y == null) continue;
+            pins.add(new RouteMyListGeometry.Pin((String) readField(pin, "c"),
+                    (String) readField(pin, "d"), (String) readField(pin, "e"),
+                    new RouteOrderPlanner.Point(x, y)));
+        }
+        return pins;
+    }
+
+    private static List<RouteMyListGeometry.ItemLocation> geometryItems(List<Object> pinItems)
+            throws Exception {
+        Class<?> pinItemCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+        Class<?> pinOptionsCls = Class.forName("com.walmart.glass.instoremaps.api.PinOptions");
+        Field itemOptions = pinItemCls.getField("a");
+        Field zone = pinOptionsCls.getField("a");
+        Field aisle = pinOptionsCls.getField("b");
+        Field section = pinOptionsCls.getField("c");
+        List<RouteMyListGeometry.ItemLocation> items = new ArrayList<>();
+        for (int index = 0; index < pinItems.size(); index++) {
+            Object options = itemOptions.get(pinItems.get(index));
+            items.add(new RouteMyListGeometry.ItemLocation(index, (String) zone.get(options),
+                    (String) aisle.get(options), (String) section.get(options)));
+        }
+        return items;
+    }
+
+    private static Double asDouble(Object value) {
+        return value instanceof Number ? ((Number) value).doubleValue() : null;
     }
 
     /**
@@ -598,7 +719,7 @@ public class WalmartRouteMyList {
         // same-letter aisles together, which is a reasonable proxy for "walk the aisles in order."
         Field pinOptionsAisleField = pinOptionsCls.getField("b");
         Field pinItemOptionsField = storeMapPinItemDetailsCls.getField("a");
-        pinItems.sort((p1, p2) -> {
+        Collections.sort(pinItems, (p1, p2) -> {
             try {
                 String aisle1 = (String) pinOptionsAisleField.get(pinItemOptionsField.get(p1));
                 String aisle2 = (String) pinOptionsAisleField.get(pinItemOptionsField.get(p2));

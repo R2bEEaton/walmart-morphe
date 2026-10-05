@@ -73,7 +73,12 @@ public final class RouteOrderPlanner {
             if (stop == null || stop.point == null || !stop.point.isFinite()) return null;
             validStops.add(stop);
         }
-        validStops.sort(Comparator.comparingInt(stop -> stop.originalIndex));
+        Collections.sort(validStops, new Comparator<Stop>() {
+            @Override
+            public int compare(Stop left, Stop right) {
+                return Integer.compare(left.originalIndex, right.originalIndex);
+            }
+        });
 
         Result best = null;
         for (Entrance entrance : entrances) {
