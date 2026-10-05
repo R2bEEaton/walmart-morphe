@@ -1,3 +1,9 @@
+## [1.1.3](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.2...v1.1.3) (2026-10-05)
+
+### 🐛 Bug Fixes
+
+* inspect store POI and bounding box details ([d1eb230](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/d1eb23088aac826f7b255a0f631b00f3152b1411))
+
 ## [1.1.2](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.1...v1.1.2) (2026-10-05)
 
 ### 🐛 Bug Fixes
