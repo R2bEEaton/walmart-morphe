@@ -114,12 +114,35 @@ public class WalmartRouteMyList {
             rememberFlashRouteRoot(root);
             root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
             root.post(() -> compactNativeFlashButtons(root));
+            refreshRouteFlashCapabilityWhenReady(root, viewModel, 0);
             Log.i(TAG, "Native Route My List flash capability refresh requested");
         } catch (Throwable t) {
             // Flashing is an optional enhancement.  Do not interfere with the route if a future
             // Walmart release changes this private view-model API.
             Log.w(TAG, "Unable to initialize Route My List flash control", t);
         }
+    }
+
+    /**
+     * The Route My List carousel is first bound before Walmart's remote flash configuration has
+     * arrived.  Its own ViewModel intentionally omits the action until that state is available;
+     * recompute once it is ready so the native button (and its native cooldown flow) can bind.
+     */
+    private static void refreshRouteFlashCapabilityWhenReady(View root, Object viewModel, int attempt) {
+        if (!root.isAttachedToWindow() || attempt >= 6) return;
+        try {
+            Object flashConfigState = readField(viewModel, "r1");
+            Object flashConfig = callNoArg(flashConfigState, "getValue");
+            if (flashConfig != null) {
+                viewModel.getClass().getMethod("Me").invoke(viewModel);
+                Log.i(TAG, "Route My List flash capability became available after " + attempt + " check(s)");
+                return;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to check Route My List flash capability", t);
+            return;
+        }
+        root.postDelayed(() -> refreshRouteFlashCapabilityWhenReady(root, viewModel, attempt + 1), 750L);
     }
 
     /**
