@@ -1,3 +1,20 @@
+## [2.0.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.3.0...v2.0.0) (2026-10-06)
+
+### ⚠ BREAKING CHANGES
+
+* the compact eye icon beside the checkbox is gone; the full-width native
+Flash price tag button and timer are used instead.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### 🐛 Bug Fixes
+
+* declare Walmart as APK so Morphe recommends APKMirror [skip ci] ([b38862e](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/b38862e997e47ad5256dbb0822159d2fad87a135))
+
+### ✨ New Features
+
+* show Walmart's native Flash price tag button on every Route My List stop ([5438413](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/543841397d6721388543ff78f5eea97c7200aac6))
+
 ## [1.3.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.2.0...v1.3.0) (2026-10-06)
 
 ### ✨ New Features
