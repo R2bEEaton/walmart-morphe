@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.2.0...v1.3.0) (2026-10-06)
+
+### ✨ New Features
+
+* enable ESL tag flashing and move route planner to shop in-store menu ([f54fba3](https://github.com/R2bEEaton/walmart-route-my-list-morphe/commit/f54fba3377c09062ae6935df66e78b0c5706327c))
+
 ## [1.2.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/compare/v1.1.5...v1.2.0) (2026-10-05)
 
 ### ✨ New Features
