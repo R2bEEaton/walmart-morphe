@@ -7,7 +7,11 @@ import app.morphe.patcher.patch.AppTarget
 import app.morphe.patcher.patch.ApkFileType
 import app.morphe.patcher.patch.Compatibility
 import app.morphe.patcher.patch.bytecodePatch
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import com.android.tools.smali.dexlib2.AccessFlags
+import com.android.tools.smali.dexlib2.Opcode
+import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 
 private const val EXTENSION_CLASS = "Lapp/template/extension/extension/WalmartRouteMyList;"
 
@@ -33,6 +37,19 @@ object ChecklistFragmentViewCreatedFingerprint : Fingerprint(
 // Route My List's native fragment owns both the real shelf-label capability check and its
 // timer/cooldown state. Hook it after its layout is created so the extension can ask that
 // state machine to render, then present the native action as a compact affordance.
+// In Route My List's ViewModel (j), Walmart hardcoded ESL flashing so that only the very
+// first item on the route (loop index == 0, isFirstItem) has showFlash set to true. For all
+// subsequent items (index > 0), showFlash is forced to false. Nop-ing the if-nez check right
+// before the shop-to-light Ee() call makes isFirstItem evaluate to true for every item in the
+// route so any stop with an ESL tag can flash.
+object RouteMyListViewModelMeFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/viewmodel/j;",
+    name = "Me",
+    accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
+    returnType = "V",
+    parameters = emptyList(),
+)
+
 object NativeRouteMyListViewCreatedFingerprint : Fingerprint(
     definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsMultiItemLocatorFragment;",
     name = "onViewCreated",
@@ -92,6 +109,19 @@ val routeMyListPatch = bytecodePatch(
             nativeRouteMethod.instructions.size - 1,
             "invoke-static/range {p0 .. p0}, $EXTENSION_CLASS->onNativeRouteMyListViewCreated(Ljava/lang/Object;)V",
         )
+
+        val meMethod = RouteMyListViewModelMeFingerprint.method
+        val eeCallIndex = meMethod.instructions.indexOfFirst { insn ->
+            insn is ReferenceInstruction &&
+                (insn.reference as? MethodReference)?.let { ref ->
+                    ref.name == "Ee" && ref.definingClass == "Lcom/walmart/glass/instoremaps/viewmodel/j;"
+                } == true
+        }
+        check(eeCallIndex >= 0) { "Could not find Ee call in viewmodel.j.Me" }
+        val ifNezIndex = (eeCallIndex - 1 downTo 0).first { i ->
+            meMethod.instructions[i].opcode == Opcode.IF_NEZ
+        }
+        meMethod.replaceInstruction(ifNezIndex, "nop")
 
         val checkboxMethod = NativeRouteMyListCheckboxFingerprint.method
         checkboxMethod.addInstructions(

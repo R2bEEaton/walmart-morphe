@@ -1016,6 +1016,11 @@ public class WalmartRouteMyList {
             if (map != null) {
                 injectRouteConnectors(cachedMapFragment, map);
             }
+
+            View routeView = (View) tryCallNoArg(cachedMapFragment, "getView");
+            if (routeView != null) {
+                routeView.post(() -> compactNativeFlashButtons(routeView));
+            }
         } catch (Throwable t) {
             Log.w(TAG, "Unable to advance currentIndex from carousel focus change", t);
         }
@@ -1141,6 +1146,14 @@ public class WalmartRouteMyList {
                     contentBottom = Math.max(contentBottom, child.getBottom());
                 }
             }
+            View eye = findFlashEye(card, null);
+            if (eye != null && eye.getVisibility() == View.VISIBLE) {
+                View checkbox = findViewByClassSuffix(card, "WcpCheckbox");
+                if (checkbox != null) {
+                    int expectedEyeBottom = checkbox.getBottom() + dp(card, 4) + dp(card, 36);
+                    contentBottom = Math.max(contentBottom, expectedEyeBottom);
+                }
+            }
             int desiredMaxHeight = addBackIsVisible ? Integer.MAX_VALUE : contentBottom + dp(card, 16);
             if (getCardMaximumHeight(card) != desiredMaxHeight) {
                 setCardMaximumHeight(card, desiredMaxHeight);
@@ -1244,7 +1257,12 @@ public class WalmartRouteMyList {
     private static TextView findFlashEye(ViewGroup parent, TextView nativeButton) {
         for (int i = 0; i < parent.getChildCount(); i++) {
             View child = parent.getChildAt(i);
-            if (child instanceof TextView && child.getTag() == nativeButton) return (TextView) child;
+            if (child instanceof TextView) {
+                if (nativeButton != null && child.getTag() == nativeButton) return (TextView) child;
+                if (nativeButton == null && "\uD83D\uDC41".equals(((TextView) child).getText())) {
+                    return (TextView) child;
+                }
+            }
         }
         return null;
     }
@@ -1252,17 +1270,24 @@ public class WalmartRouteMyList {
     private static boolean addEyeBesideCheckbox(ViewGroup parent, TextView eye) {
         try {
             View checkbox = findViewByClassSuffix(parent, "WcpCheckbox");
-            if (checkbox == null || checkbox.getId() == View.NO_ID ||
-                    !parent.getClass().getName().endsWith("ConstraintLayout")) return false;
+            if (checkbox == null || !parent.getClass().getName().endsWith("ConstraintLayout")) return false;
+            if (checkbox.getId() == View.NO_ID) {
+                checkbox.setId(View.generateViewId());
+            }
+            if (eye.getId() == View.NO_ID) {
+                eye.setId(View.generateViewId());
+            }
             Class<?> paramsClass = Class.forName("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams");
             Object params = paramsClass.getConstructor(int.class, int.class)
                     .newInstance(dp(parent, 36), dp(parent, 36));
-            paramsClass.getField("endToStart").setInt(params, checkbox.getId());
-            paramsClass.getField("topToTop").setInt(params, checkbox.getId());
-            paramsClass.getField("bottomToBottom").setInt(params, checkbox.getId());
+            paramsClass.getField("topToBottom").setInt(params, checkbox.getId());
+            paramsClass.getField("startToStart").setInt(params, checkbox.getId());
+            paramsClass.getField("endToEnd").setInt(params, checkbox.getId());
+            paramsClass.getField("topMargin").setInt(params, dp(parent, 4));
             parent.addView(eye, (ViewGroup.LayoutParams) params);
             return true;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Log.w(TAG, "Unable to add eye icon below checkbox", t);
             return false;
         }
     }
