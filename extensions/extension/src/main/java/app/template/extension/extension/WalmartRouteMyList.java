@@ -332,8 +332,8 @@ public class WalmartRouteMyList {
     /**
      * Called after Walmart creates its multi-item Route My List carousel.  The native view model
      * already knows whether the selected store/item can flash an ESL tag and owns the timer and
-     * cooldown.  Asking it to refresh here preserves those rules; we only compact its otherwise
-     * large action button into an eye button beside the item's checkbox.
+     * cooldown.  Asking it to refresh here preserves those rules; we leave its native
+     * action button and timer exactly as Walmart renders them.
      */
     public static void onNativeRouteMyListViewCreated(Object routeFragment) {
         try {
@@ -371,6 +371,7 @@ public class WalmartRouteMyList {
                 root.getViewTreeObserver().addOnGlobalLayoutListener(() -> compactNativeFlashButtons(root));
                 root.post(() -> compactNativeFlashButtons(root));
                 refreshRouteFlashCapabilityWhenReady(root, viewModel, 0);
+                prefetchEslTags(root);
             }
             // Experimental: give the carousel card time to settle into its collapsed height
             // (collapseUnusedCarouselCardSpace), then nudge the map to recompute its zoom-to-fit.
@@ -1042,22 +1043,15 @@ public class WalmartRouteMyList {
         FLASH_ROUTE_ROOTS.add(new WeakReference<>(root));
     }
 
-    /** Walks the native carousel after each bind.  Only native buttons whose own label says
-     * "flash" are replaced; navigation, item-detail, and check-off controls remain untouched. */
+    /** Walks the native carousel after each bind to hide the feedback and resume-route prompts and
+     * collapse unused card space. The native Flash Price Tag button and its timer stay untouched. */
     private static void compactNativeFlashButtons(View root) {
         try {
             List<View> allViews = new ArrayList<>();
             collectViews(root, allViews);
+            applyEslTags(root);
             hideRouteFeedbackPrompt(allViews);
             hideResumeRouteButton(allViews);
-            collapseUnusedCarouselCardSpace(allViews);
-            for (View candidate : allViews) {
-                if (!candidate.getClass().getName().endsWith("WcpButton")) continue;
-                if (!(candidate instanceof TextView)) continue;
-                String label = String.valueOf(((TextView) candidate).getText()).toLowerCase();
-                if (!label.contains("flash")) continue;
-                compactNativeFlashButton((TextView) candidate);
-            }
         } catch (Throwable t) {
             Log.w(TAG, "Unable to compact native flash control", t);
         }
@@ -1114,96 +1108,6 @@ public class WalmartRouteMyList {
         }
     }
 
-    /** Let the native Add-back action expand a carousel card only when it is actually rendered. */
-    private static void collapseUnusedCarouselCardSpace(List<View> views) {
-        for (View view : views) {
-            if (!(view instanceof ViewGroup) ||
-                    !hasResourceEntryName(view, "instoremaps_item_carousel_card_root")) continue;
-            ViewGroup card = (ViewGroup) view;
-            boolean addBackIsVisible = false;
-            for (int i = 0; i < card.getChildCount(); i++) {
-                View child = card.getChildAt(i);
-                if (hasResourceEntryName(child, "instoremaps_item_carousel_add_back_button")
-                        && child.getVisibility() == View.VISIBLE) {
-                    addBackIsVisible = true;
-                    break;
-                }
-            }
-            ViewGroup.LayoutParams params = card.getLayoutParams();
-            if (params == null) continue;
-            int desiredHeight = ViewGroup.LayoutParams.WRAP_CONTENT;
-            if (params.height != desiredHeight) {
-                params.height = desiredHeight;
-                card.setLayoutParams(params);
-            }
-            // The horizontal RecyclerView measures every item to its full carousel height.  The
-            // native card itself is a ConstraintLayout, whose maxHeight is honored after that
-            // parent measurement; it is the constraint that removes the otherwise blank area.
-            int contentBottom = 0;
-            for (int i = 0; i < card.getChildCount(); i++) {
-                View child = card.getChildAt(i);
-                if (child.getVisibility() == View.VISIBLE) {
-                    contentBottom = Math.max(contentBottom, child.getBottom());
-                }
-            }
-            View eye = findFlashEye(card, null);
-            if (eye != null && eye.getVisibility() == View.VISIBLE) {
-                View checkbox = findViewByClassSuffix(card, "WcpCheckbox");
-                if (checkbox != null) {
-                    int expectedEyeBottom = checkbox.getBottom() + dp(card, 4) + dp(card, 36);
-                    contentBottom = Math.max(contentBottom, expectedEyeBottom);
-                }
-            }
-            int desiredMaxHeight = addBackIsVisible ? Integer.MAX_VALUE : contentBottom + dp(card, 16);
-            if (getCardMaximumHeight(card) != desiredMaxHeight) {
-                setCardMaximumHeight(card, desiredMaxHeight);
-                card.requestLayout();
-            }
-            final boolean hasAddBackAction = addBackIsVisible;
-            card.post(() -> {
-                // LinearLayoutManager top-aligns every carousel item. Compact cards must instead
-                // share the full card's bottom edge so neighboring cards do not appear to float.
-                int tallestAttachedCard = tallestAttachedCarouselCard(card);
-                float bottomAlignment = hasAddBackAction ? 0f
-                        : Math.max(0, tallestAttachedCard - card.getHeight());
-                if (Math.abs(card.getTranslationY() - bottomAlignment) > 1f) {
-                    card.setTranslationY(bottomAlignment);
-                }
-            });
-        }
-    }
-
-    private static int tallestAttachedCarouselCard(View card) {
-        if (!(card.getParent() instanceof ViewGroup)) return card.getHeight();
-        ViewGroup carousel = (ViewGroup) card.getParent();
-        int tallest = card.getHeight();
-        for (int i = 0; i < carousel.getChildCount(); i++) {
-            View sibling = carousel.getChildAt(i);
-            if (hasResourceEntryName(sibling, "instoremaps_item_carousel_card_root")) {
-                tallest = Math.max(tallest, sibling.getHeight());
-            }
-        }
-        return tallest;
-    }
-
-    private static int getCardMaximumHeight(View card) {
-        try {
-            return ((Integer) card.getClass().getMethod("getMaxHeight").invoke(card)).intValue();
-        } catch (Throwable t) {
-            return -1;
-        }
-    }
-
-    private static void setCardMaximumHeight(View card, int maxHeight) {
-        try {
-            // Keep this reflective: the extension is compiled independently of Walmart's
-            // ConstraintLayout version, while the runtime method is stable across its releases.
-            card.getClass().getMethod("setMaxHeight", int.class).invoke(card, maxHeight);
-        } catch (Throwable t) {
-            Log.w(TAG, "Unable to adjust Route My List card maximum height", t);
-        }
-    }
-
     private static boolean hasResourceEntryName(View view, String entryName) {
         int id = view.getId();
         if (id == View.NO_ID) return false;
@@ -1212,94 +1116,6 @@ public class WalmartRouteMyList {
         } catch (Throwable ignored) {
             return false;
         }
-    }
-
-    private static void compactNativeFlashButton(TextView nativeButton) {
-        ViewGroup parent = nativeButton.getParent() instanceof ViewGroup
-                ? (ViewGroup) nativeButton.getParent() : null;
-        if (parent == null) return;
-
-        TextView eye = findFlashEye(parent, nativeButton);
-        if (eye == null) {
-            eye = new TextView(parent.getContext());
-            eye.setText("\uD83D\uDC41");
-            eye.setTextSize(19);
-            eye.setGravity(Gravity.CENTER);
-            eye.setTextColor(Color.rgb(0, 113, 206));
-            eye.setContentDescription("Flash price tag");
-            eye.setPadding(0, 0, 0, 0);
-            eye.setTag(nativeButton);
-
-            if (!addEyeBesideCheckbox(parent, eye)) return;
-            final TextView eyeControl = eye;
-            eye.setOnClickListener(v -> {
-                // The native click listener emits the real flashPriceLabel event and hands its
-                // timer/cooldown state back to the carousel. We deliberately do not synthesize a
-                // flash request or a local timer here.
-                eyeControl.setEnabled(false);
-                eyeControl.setAlpha(0.45f);
-                nativeButton.performClick();
-            });
-        }
-
-        // When the native timer is showing, let its visible cooldown UI take over. Once its
-        // state machine returns to the normal flash action this method makes the eye active again.
-        if (containsVisibleTimedButton(parent)) {
-            eye.setVisibility(View.GONE);
-            return;
-        }
-        eye.setVisibility(View.VISIBLE);
-        eye.setEnabled(true);
-        eye.setAlpha(1f);
-        nativeButton.setVisibility(View.GONE);
-    }
-
-    private static TextView findFlashEye(ViewGroup parent, TextView nativeButton) {
-        for (int i = 0; i < parent.getChildCount(); i++) {
-            View child = parent.getChildAt(i);
-            if (child instanceof TextView) {
-                if (nativeButton != null && child.getTag() == nativeButton) return (TextView) child;
-                if (nativeButton == null && "\uD83D\uDC41".equals(((TextView) child).getText())) {
-                    return (TextView) child;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static boolean addEyeBesideCheckbox(ViewGroup parent, TextView eye) {
-        try {
-            View checkbox = findViewByClassSuffix(parent, "WcpCheckbox");
-            if (checkbox == null || !parent.getClass().getName().endsWith("ConstraintLayout")) return false;
-            if (checkbox.getId() == View.NO_ID) {
-                checkbox.setId(View.generateViewId());
-            }
-            if (eye.getId() == View.NO_ID) {
-                eye.setId(View.generateViewId());
-            }
-            Class<?> paramsClass = Class.forName("androidx.constraintlayout.widget.ConstraintLayout$LayoutParams");
-            Object params = paramsClass.getConstructor(int.class, int.class)
-                    .newInstance(dp(parent, 36), dp(parent, 36));
-            paramsClass.getField("topToBottom").setInt(params, checkbox.getId());
-            paramsClass.getField("startToStart").setInt(params, checkbox.getId());
-            paramsClass.getField("endToEnd").setInt(params, checkbox.getId());
-            paramsClass.getField("topMargin").setInt(params, dp(parent, 4));
-            parent.addView(eye, (ViewGroup.LayoutParams) params);
-            return true;
-        } catch (Throwable t) {
-            Log.w(TAG, "Unable to add eye icon below checkbox", t);
-            return false;
-        }
-    }
-
-    private static boolean containsVisibleTimedButton(View root) {
-        List<View> views = new ArrayList<>();
-        collectViews(root, views);
-        for (View view : views) {
-            if (view.getVisibility() == View.VISIBLE &&
-                    view.getClass().getName().endsWith("TimedButtonView")) return true;
-        }
-        return false;
     }
 
     private static View findViewByClassSuffix(View root, String suffix) {
@@ -1506,10 +1322,13 @@ public class WalmartRouteMyList {
 
             Object pinOptions = pinOptionsCtor.newInstance(
                     zone, aisleNumber, section, null, null, null, null, null, null);
+            // Shelf-label (ESL) tags are not part of the list data; prefetchEslTags() fills them in
+            // later from the item page's product query so Walmart shows its native flash button.
+            List<Object> locations = Collections.emptyList();
             Object itemDetails = itemDetailsCtor.newInstance(
                     thumbnailUrl, itemId, name, preciseLocation, null, null,
                     null, null, null, null, null, null, null, null, null, null,
-                    Collections.emptyList(), 1);
+                    locations, 1);
             pinItems.add(pinItemCtor.newInstance(pinOptions, itemDetails));
         }
 
@@ -1546,6 +1365,263 @@ public class WalmartRouteMyList {
         });
 
         return pinItems;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Shelf-label (ESL) tag lookup. Route My List's own item details carry no shelf-label data, so
+    // Walmart hides "Flash price tag". The item page gets the tags from its product GraphQL query;
+    // replay that query through Walmart's own Apollo client for each route item and write the tags
+    // into the item details, then ask the view model to recompute which actions to show.
+    // ---------------------------------------------------------------------------------------
+    private static final Map<String, List<String>> ESL_TAGS = new ConcurrentHashMap<>();
+    private static final Set<String> ESL_REQUESTED = ConcurrentHashMap.newKeySet();
+
+    private static void prefetchEslTags(View root) {
+        try {
+            List<Object> pins = cachedPinItems;
+            if (pins == null) return;
+            Class<?> pinCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+            Class<?> detailsCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails");
+            Field pinDetails = pinCls.getField("b");
+            Field detailsId = detailsCls.getField("b");
+            final List<String> missing = new ArrayList<>();
+            for (Object pin : pins) {
+                String id = (String) detailsId.get(pinDetails.get(pin));
+                if (!isEmpty(id) && ESL_REQUESTED.add(id)) missing.add(id);
+            }
+            if (missing.isEmpty()) return;
+            Thread worker = new Thread(() -> {
+                for (String id : missing) {
+                    try {
+                        List<String> tags = fetchEslTags(id);
+                        ESL_TAGS.put(id, tags);
+                        Log.i(TAG, "ESLFETCH item " + id + " -> " + tags);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "ESLFETCH item " + id + " failed", t);
+                        ESL_TAGS.put(id, Collections.emptyList());
+                    }
+                    root.post(() -> applyEslTags(root));
+                }
+            }, "RouteMyListEslFetch");
+            worker.start();
+        } catch (Throwable t) {
+            Log.w(TAG, "ESLFETCH setup failed", t);
+        }
+    }
+
+    /** Writes any fetched tags into the live item details and refreshes the native view model. */
+    private static void applyEslTags(View root) {
+        try {
+            if (ESL_TAGS.isEmpty() || cachedMapFragment == null) return;
+            Object viewModel = callNoArg(cachedMapFragment, "cf");
+            Class<?> pinCls = Class.forName("com.walmart.glass.instoremaps.api.model.StoreMapPinItemDetails");
+            List<Object> detailsList = new ArrayList<>();
+            List<Object> pins = cachedPinItems;
+            if (pins != null) {
+                Field pinDetails = pinCls.getField("b");
+                for (Object pin : pins) detailsList.add(pinDetails.get(pin));
+            }
+            Object models = readField(viewModel, "z1");
+            if (models instanceof List) {
+                for (Object model : (List<?>) models) detailsList.add(readField(model, "a"));
+            }
+            boolean changed = false;
+            for (Object details : detailsList) {
+                if (details != null && attachEslTags(details)) changed = true;
+            }
+            if (changed) {
+                viewModel.getClass().getMethod("Me").invoke(viewModel);
+                Log.i(TAG, "ESLFETCH applied shelf-label tags; view model refreshed");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "ESLFETCH apply failed", t);
+        }
+    }
+
+    private static boolean attachEslTags(Object details) throws Exception {
+        Class<?> detailsCls = details.getClass();
+        String id = (String) detailsCls.getField("b").get(details);
+        List<String> tags = id == null ? null : ESL_TAGS.get(id);
+        if (tags == null || tags.isEmpty()) return false;
+        Field q = detailsCls.getField("q");
+        Object current = q.get(details);
+        if (current instanceof List && !((List<?>) current).isEmpty()) return false;
+        Class<?> eslCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails$ESLTag");
+        Class<?> aisleCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails$Aisle");
+        Class<?> locCls = Class.forName("com.walmart.glass.instoremaps.api.model.InstoreMapsItemDetails$ProductLocation");
+        List<Object> tagObjects = new ArrayList<>();
+        for (String barcode : tags) tagObjects.add(eslCls.getConstructor(String.class).newInstance(barcode));
+        Object aisle = aisleCls.getConstructor(String.class, List.class).newInstance("", tagObjects);
+        List<Object> locations = new ArrayList<>();
+        locations.add(locCls.getConstructor(aisleCls).newInstance(aisle));
+        q.setAccessible(true);
+        q.set(details, locations);
+        return true;
+    }
+
+    private static List<String> fetchEslTags(String itemId) throws Exception {
+        Class<?> productCls = Class.forName(
+                "com.walmart.glass.featureitem.orchestration.graphql.generated.GetProduct");
+        Object operation = buildGetProduct(productCls, itemId);
+        Object client = Class.forName("com.walmart.glass.item.repository.f").getMethod("t").invoke(null);
+        Class<?> callCls = Class.forName("com.apollographql.apollo3.a");
+        Object call = null;
+        for (Constructor<?> ctor : callCls.getConstructors()) {
+            Class<?>[] types = ctor.getParameterTypes();
+            if (types.length == 2 && types[0].isInstance(client) && types[1].isInstance(operation)) {
+                call = ctor.newInstance(client, operation);
+                break;
+            }
+        }
+        if (call == null) throw new IllegalStateException("No Apollo call constructor matched");
+        Method addHeader = callCls.getMethod("a", String.class, String.class);
+        addHeader.invoke(call, "POST_INCLUDE_DOCUMENT", "true");
+        addHeader.invoke(call, "WM_CONSUMER.ID", "c52ce16a-df55-43ee-ba7c-4c24fdb3bb05");
+        addHeader.invoke(call, "cyomv2enabled", "true");
+        addHeader.invoke(call, "sizeConversionEnabled", "true");
+        Class<?> continuationCls = Class.forName("kotlin.coroutines.Continuation");
+        Object response = awaitSuspend(callCls.getMethod("b", continuationCls), call, continuationCls);
+        List<String> tags = new ArrayList<>();
+        collectEslBarcodes(response, tags);
+        return tags;
+    }
+
+    /** Invokes a Kotlin suspend function from Java and blocks the (background) caller for its result. */
+    private static Object awaitSuspend(Method method, Object target, Class<?> continuationCls) throws Exception {
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        final Object[] holder = new Object[1];
+        final Object context = Class.forName("kotlin.coroutines.EmptyCoroutineContext").getField("INSTANCE").get(null);
+        Object continuation = Proxy.newProxyInstance(continuationCls.getClassLoader(), new Class<?>[]{continuationCls},
+                (proxy, m, args) -> {
+                    if (m.getDeclaringClass() == Object.class) {
+                        if (m.getName().equals("hashCode")) return System.identityHashCode(proxy);
+                        if (m.getName().equals("equals")) return proxy == args[0];
+                        return "RouteMyListContinuation";
+                    }
+                    if (args == null || args.length == 0) return context;
+                    holder[0] = args[0];
+                    latch.countDown();
+                    return null;
+                });
+        Object result = method.invoke(target, continuation);
+        String resultType = result == null ? "" : result.getClass().getName();
+        if (resultType.contains("CoroutineSingletons") || String.valueOf(result).equals("COROUTINE_SUSPENDED")) {
+            if (!latch.await(40, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for the item query");
+            }
+            result = holder[0];
+        }
+        if (result != null && result.getClass().getName().contains("Failure")) {
+            throw new IllegalStateException("Item query failed: " + result);
+        }
+        return result;
+    }
+
+    private static Object buildGetProduct(Class<?> productCls, String itemId) throws Exception {
+        Class<?> unsafeCls = Class.forName("sun.misc.Unsafe");
+        Field theUnsafe = unsafeCls.getDeclaredField("theUnsafe");
+        theUnsafe.setAccessible(true);
+        Object operation = unsafeCls.getMethod("allocateInstance", Class.class).invoke(theUnsafe.get(null), productCls);
+
+        Class<?> optionalCls = Class.forName("com.apollographql.apollo3.api.Optional");
+        Class<?> presentCls = Class.forName("com.apollographql.apollo3.api.Optional$Present");
+        Object absent = Class.forName("com.apollographql.apollo3.api.Optional$Absent").getField("INSTANCE").get(null);
+        Constructor<?> presentCtor = presentCls.getConstructors()[0];
+
+        // Values observed when Walmart's item page loads a product (see the GETPRODUCT capture).
+        Map<String, Object> values = new HashMap<>();
+        values.put("itId", itemId);
+        values.put("contentLayoutVersion", "v2");
+        values.put("layoutId", "mobile-item");
+        values.put("pageType", "MobileItemscreenGlobal");
+        values.put("ten", "WM_GLASS");
+        for (String name : new String[]{"enablePrepurchaseReviewIncentive", "isOneDebitCardBannerEnabled",
+                "isStoreJourneyEnabled", "isSubscriptionFrequencyListEnabled", "isVisionCenterEnabled",
+                "secondaryOffersEnabled"}) {
+            values.put(name, Boolean.TRUE);
+        }
+        for (String name : new String[]{"includefilterCriteria", "isATFReviewSummaryBulletFormatEnabled", "sel",
+                "vCrit"}) {
+            values.put(name, presentCtor.newInstance(Boolean.TRUE));
+        }
+        for (String name : new String[]{"enableMergeProductIdml", "includeTopRankedReviewMedia", "includeVideo",
+                "isAOSWplusDiscountEnabled", "isAddToDeliveryEnabled", "isBill29Enabled", "isBuyboxAdV1Enabled",
+                "isBuyboxSponsoredPromptsEnabled", "isBuyboxVideoEnabled", "isChannelLevelPriceInfoEnabled",
+                "isComparisonChartSponsoredEnabled", "isContactLensPurchaseEnabled", "isFlowerDeliveryDateEnabled",
+                "isOptionalPropertyEnabled", "isPrismWalmartPlusEventBannerEnabled", "isPromotionEligibleEnabled",
+                "isShippingCostMessageEnabled", "isSubscriptionValuePropEnabled", "isUpstreamErrorCodeEnabled",
+                "shouldEnableSDAS", "skipIDMLAtRootLevel"}) {
+            values.put(name, presentCtor.newInstance(Boolean.FALSE));
+        }
+        values.put("count", presentCtor.newInstance(Integer.valueOf(1)));
+        values.put("startAt", presentCtor.newInstance(Integer.valueOf(1)));
+        values.put("postProcessingVersion", presentCtor.newInstance(Integer.valueOf(2)));
+        values.put("reviewSummaryAspectsLimit", presentCtor.newInstance(Integer.valueOf(6)));
+
+        for (Field field : productCls.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) continue;
+            field.setAccessible(true);
+            Class<?> type = field.getType();
+            Object value = values.get(field.getName());
+            if (value == null) {
+                if (type == boolean.class) value = Boolean.FALSE;
+                else if (optionalCls.isAssignableFrom(type)) value = absent;
+                else if (type == String.class) value = "";
+                else if (List.class.isAssignableFrom(type)) value = Collections.emptyList();
+            }
+            if (value != null) field.set(operation, value);
+        }
+        return operation;
+    }
+
+    /** Collects barcodes from any list field named like "eslTags" anywhere in a response graph. */
+    private static void collectEslBarcodes(Object root, List<String> out) throws Exception {
+        java.util.IdentityHashMap<Object, Boolean> seen = new java.util.IdentityHashMap<>();
+        ArrayDeque<Object> queue = new ArrayDeque<>();
+        if (root != null) queue.add(root);
+        int visited = 0;
+        while (!queue.isEmpty() && visited < 300000) {
+            Object node = queue.poll();
+            if (node == null || seen.put(node, Boolean.TRUE) != null) continue;
+            visited++;
+            if (node instanceof java.util.Collection) {
+                for (Object e : (java.util.Collection<?>) node) if (e != null) queue.add(e);
+                continue;
+            }
+            if (node instanceof Map) {
+                for (Object e : ((Map<?, ?>) node).values()) if (e != null) queue.add(e);
+                continue;
+            }
+            String cn = node.getClass().getName();
+            if (!(cn.startsWith("com.walmart") || cn.startsWith("com.apollographql"))) continue;
+            for (Field field : node.getClass().getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers()) || field.getType().isPrimitive()) continue;
+                field.setAccessible(true);
+                Object value = field.get(node);
+                if (value == null) continue;
+                if (field.getName().toLowerCase(Locale.ROOT).contains("esltag") && value instanceof List) {
+                    for (Object tag : (List<?>) value) {
+                        String barcode = barcodeOf(tag);
+                        if (!isEmpty(barcode) && !out.contains(barcode)) out.add(barcode);
+                    }
+                } else {
+                    queue.add(value);
+                }
+            }
+        }
+    }
+
+    private static String barcodeOf(Object tag) throws Exception {
+        if (tag == null) return null;
+        String fallback = null;
+        for (Field f : tag.getClass().getDeclaredFields()) {
+            if (Modifier.isStatic(f.getModifiers()) || f.getType() != String.class) continue;
+            f.setAccessible(true);
+            String v = (String) f.get(tag);
+            if (f.getName().toLowerCase(Locale.ROOT).contains("barcode")) return v;
+            if (fallback == null) fallback = v;
+        }
+        return fallback;
     }
 
     /** (Re)opens the native map, focused on cachedPinItems.get(currentIndex), with all pins shown. */
