@@ -19,7 +19,9 @@ val walmartCompatibility = Compatibility(
     name = "Walmart",
     packageName = "com.walmart.android",
     appIconColor = 0x0071CE,
-    apkFileType = ApkFileType.APKM,
+    // Must match the file type on APKMirror (walmart-shopping-savings-26-38-android-apk-download),
+    // otherwise Morphe Manager won't send the user there.
+    apkFileType = ApkFileType.APK,
     targets = listOf(
         AppTarget(version = "26.38"),
     ),

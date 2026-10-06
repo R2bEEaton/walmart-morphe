@@ -13,7 +13,7 @@
           "packageName": "com.walmart.android",
           "name": "Walmart",
           "description": null,
-          "apkFileType": "APKM",
+          "apkFileType": "APK",
           "appIconColor": "#0071CE",
           "signatures": null,
           "targets": [
