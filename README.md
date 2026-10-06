@@ -1,4 +1,4 @@
-# Walmart Route My List Morphe Patches
+# Walmart Morphe Patches
 
 Route My List enhancements for the Walmart Android app.
 
@@ -8,12 +8,12 @@ Includes an in-store route map for eligible shopping-list items, an item carouse
 
 ### How to use these patches
 
-Click here to add these patches to Morphe: https://morphe.software/add-source?github=R2bEEaton/walmart-route-my-list-morphe
+Click here to add these patches to Morphe: https://morphe.software/add-source?github=R2bEEaton/walmart-morphe
 
 ## 🩹 Patches list
 
 <!-- PATCHES_START EXPANDED -->
-> **[v2.0.0](https://github.com/R2bEEaton/walmart-route-my-list-morphe/releases/tag/v2.0.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;1 patches total
+> **[v2.0.0](https://github.com/R2bEEaton/walmart-morphe/releases/tag/v2.0.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;1 patches total
 <details open>
 <summary>📦 Walmart&nbsp;&nbsp;•&nbsp;&nbsp;1 patch</summary>
 <br>
@@ -42,4 +42,4 @@ See the [Morphe documentation](https://github.com/MorpheApp/morphe-documentation
 
 ## 📜 License
 
-Walmart Route My List Morphe Patches are licensed under the [GNU General Public License v3.0](LICENSE)
+Walmart Morphe Patches are licensed under the [GNU General Public License v3.0](LICENSE)

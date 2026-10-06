@@ -2,12 +2,12 @@ group = "com.r2beeaton.morphe"
 
 patches {
     about {
-        name = "R2bEEaton Walmart Route My List"
+        name = "R2bEEaton Walmart Morphe"
         description = "Route My List enhancements for the Walmart Android app"
-        source = "https://github.com/R2bEEaton/walmart-route-my-list-morphe"
+        source = "https://github.com/R2bEEaton/walmart-morphe"
         author = "R2bEEaton"
         contact = "https://github.com/R2bEEaton"
-        website = "https://github.com/R2bEEaton/walmart-route-my-list-morphe"
+        website = "https://github.com/R2bEEaton/walmart-morphe"
         license = "GPLv3"
     }
 }

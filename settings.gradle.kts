@@ -1,4 +1,4 @@
-rootProject.name = "walmart-route-my-list-morphe"
+rootProject.name = "walmart-morphe"
 
 pluginManagement {
     repositories {
