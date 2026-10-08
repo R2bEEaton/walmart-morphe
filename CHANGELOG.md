@@ -1,3 +1,9 @@
+## [2.1.0](https://github.com/R2bEEaton/walmart-morphe/compare/v2.0.1...v2.1.0) (2026-10-08)
+
+### ✨ New Features
+
+* keep Route My List stops in one store area together ([1cdfc20](https://github.com/R2bEEaton/walmart-morphe/commit/1cdfc2005169a034cfabaa56e714614ecc8c6953))
+
 ## [2.0.1](https://github.com/R2bEEaton/walmart-morphe/compare/v2.0.0...v2.0.1) (2026-10-08)
 
 ### 🐛 Bug Fixes
