@@ -1,3 +1,9 @@
+## [3.1.0](https://github.com/R2bEEaton/walmart-morphe/compare/v3.0.2...v3.1.0) (2026-10-14)
+
+### ✨ New Features
+
+* replace Remove Ads with Remove Shop mod to remove Shop tab completely ([b479f06](https://github.com/R2bEEaton/walmart-morphe/commit/b479f0661b4388c6ae69493253d0d278df0c1739))
+
 ## [3.0.2](https://github.com/R2bEEaton/walmart-morphe/compare/v3.0.1...v3.0.2) (2026-10-14)
 
 ### 🐛 Bug Fixes

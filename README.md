@@ -13,7 +13,7 @@ Click here to add these patches to Morphe: https://morphe.software/add-source?gi
 ## 🩹 Patches list
 
 <!-- PATCHES_START EXPANDED -->
-> **[v3.0.2](https://github.com/R2bEEaton/walmart-morphe/releases/tag/v3.0.2)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;6 patches total
+> **[v3.1.0](https://github.com/R2bEEaton/walmart-morphe/releases/tag/v3.1.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;6 patches total
 <details open>
 <summary>📦 Walmart&nbsp;&nbsp;•&nbsp;&nbsp;6 patches</summary>
 <br>
@@ -29,7 +29,7 @@ Click here to add these patches to Morphe: https://morphe.software/add-source?gi
 | [Find Item for Linked Items](#find-item-for-linked-items) | Restores the 'Find item' button on linked shopping list items so you can link a different product. |  |
 | [Flash Everywhere](#flash-everywhere) | Adds a dedicated 'Flash tag' sibling pill button next to Aisle indicators throughout the app to illuminate electronic shelf tags directly. |  |
 | [Real-Time Stock & Inventory Display](#real-time-stock-inventory-display) | Displays real-time in-store stock availability badges on list and checklist items (e.g. In Stock, Low Stock / Only X left, Out of Stock). |  |
-| [Remove Sponsored Ads](#remove-sponsored-ads) | Removes sponsored product carousels, banner ads, and promotional placements for a faster, cleaner app experience. |  |
+| [Remove Shop](#remove-shop) | Removes the Shop tab entirely from the bottom navigation bar and opens to My Items by default. |  |
 | [Route My List](#route-my-list) | Adds a 'Plan my route' map icon to the Walmart 'Shop in-store' checklist screen that opens Walmart's own in-store map with every list item's aisle pinned at once. |  |
 
 </details>
