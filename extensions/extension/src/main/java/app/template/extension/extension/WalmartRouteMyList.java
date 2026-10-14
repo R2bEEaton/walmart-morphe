@@ -16,6 +16,8 @@ import android.widget.TextView;
 import android.widget.ImageView;
 import android.util.TypedValue;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.widget.Toast;
@@ -70,6 +72,7 @@ public class WalmartRouteMyList {
     /** Requested quantity per map item id, from the list item (ListDetailItem.requestedQuantity). */
     private static final Map<String, Integer> ITEM_QUANTITY = new ConcurrentHashMap<>();
     private static final Set<String> ALREADY_CHECKED_ITEM_IDS = Collections.synchronizedSet(new HashSet<>());
+    private static final Set<String> EXPLICITLY_UNCHECKED_ITEM_IDS = Collections.synchronizedSet(new HashSet<>());
     private static String currentListId = "";
     private static Object cachedMapFragment;
     private static List<Object> cachedPinItems;
@@ -104,6 +107,8 @@ public class WalmartRouteMyList {
     // carousel is rebuilt as the shopper checks items off.  Weak references only prevent us from
     // registering the same layout observer more than once.
     private static final List<WeakReference<View>> FLASH_ROUTE_ROOTS = new ArrayList<>();
+    public static volatile boolean sAutoFlashNextItem = false;
+    public static volatile String sCurrentStoreId = "";
 
     /** Called from the patched Z0.kb(Menu, MenuInflater) to add our button. */
     /** Called when ChecklistFragment creates its view to inject the 'Plan my route' map icon. */
@@ -112,9 +117,15 @@ public class WalmartRouteMyList {
             Log.i(TAG, "onChecklistFragmentViewCreated: fragment=" + fragment);
             cachedListFragment = fragment;
             currentListId = getListId(fragment);
+            try {
+                String sid = getCurrentStoreId(fragment);
+                if (!isEmpty(sid)) sCurrentStoreId = sid;
+            } catch (Throwable ignored) {}
 
             if (root == null) return;
             root.post(() -> injectChecklistMapIcon(fragment, root));
+            root.postDelayed(() -> syncChecklistItemsFromSavedState(fragment), 300L);
+            root.postDelayed(() -> syncChecklistItemsFromSavedState(fragment), 800L);
         } catch (Throwable t) {
             Log.e(TAG, "Failed in onChecklistFragmentViewCreated", t);
         }
@@ -260,6 +271,25 @@ public class WalmartRouteMyList {
                 if (id != null && !id.isEmpty()) return id;
             }
         } catch (Throwable ignored) {}
+        try {
+            Context ctx = null;
+            try {
+                ctx = (Context) tryCallNoArg(fragment, "getContext");
+            } catch (Throwable ignored) {}
+            if (ctx == null) {
+                try {
+                    ctx = (Context) tryCallNoArg(fragment, "requireContext");
+                } catch (Throwable ignored) {}
+            }
+            if (ctx != null) {
+                SharedPreferences prefs = ctx.getSharedPreferences("unsecure-com.walmart.glass.lists", Context.MODE_PRIVATE);
+                for (String k : prefs.getAll().keySet()) {
+                    if (k.startsWith("listsChecklistPreferenceKey")) {
+                        return k.substring("listsChecklistPreferenceKey".length());
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
         return "";
     }
 
@@ -337,6 +367,13 @@ public class WalmartRouteMyList {
      * cooldown.  Asking it to refresh here preserves those rules; we leave its native
      * action button and timer exactly as Walmart renders them.
      */
+    public static void onNativeRouteMyListViewDestroyed() {
+        Log.i(TAG, "onNativeRouteMyListViewDestroyed: map exited, syncing checklist items to checklist fragment");
+        if (cachedListFragment != null) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> syncChecklistItemsFromSavedState(cachedListFragment), 250L);
+        }
+    }
+
     public static void onNativeRouteMyListViewCreated(Object routeFragment) {
         try {
             // Temporary: lets Chrome DevTools attach to the map WebView (chrome://inspect via
@@ -345,6 +382,12 @@ public class WalmartRouteMyList {
             WebView.setWebContentsDebuggingEnabled(true);
             cachedMapFragment = routeFragment;
             Object viewModel = callNoArg(routeFragment, "cf");
+            for (String checkedId : ALREADY_CHECKED_ITEM_IDS) {
+                try {
+                    viewModel.getClass().getMethod("Ne", Boolean.class, String.class)
+                            .invoke(viewModel, Boolean.TRUE, checkedId);
+                } catch (Throwable ignored) {}
+            }
             viewModel.getClass().getMethod("Me").invoke(viewModel);
             View root = (View) callNoArg(routeFragment, "getView");
             if (root == null) return;
@@ -792,10 +835,12 @@ public class WalmartRouteMyList {
             if (details != null) {
                 Object id = readField(details, "b");
                 if (id != null) return id.toString();
+                Object d = readField(details, "d");
+                if (d != null) return d.toString();
             }
         } catch (Throwable ignored) {}
         try {
-            Object id = tryCallAny(item, "getItemId", "getId", "b");
+            Object id = tryCallAny(item, "getItemId", "getId", "b", "d");
             if (id != null) return id.toString();
         } catch (Throwable ignored) {}
         return item.toString();
@@ -858,9 +903,9 @@ public class WalmartRouteMyList {
 
             Log.i(TAG, "syncChecklistState: completedItemId=" + completedItemId + ", listItemId=" + listItemId + ", isNowChecked=" + isNowChecked + ", currentListId=" + currentListId);
 
-            // 1. Update SharedPreferences
-            if (!isEmpty(currentListId) && cachedListFragment != null) {
-                Context ctx = null;
+            // 1. Update SharedPreferences in both unsecure-com.walmart.glass.lists and com.walmart.glass.lists
+            Context ctx = null;
+            if (cachedListFragment != null) {
                 try {
                     ctx = (Context) tryCallNoArg(cachedListFragment, "getContext");
                 } catch (Throwable ignored) {}
@@ -869,56 +914,74 @@ public class WalmartRouteMyList {
                         ctx = (Context) tryCallNoArg(cachedListFragment, "requireContext");
                     } catch (Throwable ignored) {}
                 }
-                if (ctx != null) {
-                    SharedPreferences prefs = ctx.getSharedPreferences("com.walmart.glass.lists", Context.MODE_PRIVATE);
-                    String prefKey = "listsChecklistPreferenceKey" + currentListId;
-                    Set<String> currentSet = prefs.getStringSet(prefKey, Collections.emptySet());
-                    Set<String> newSet = new HashSet<>(currentSet);
-                    if (isNowChecked) {
-                        newSet.add(listItemId);
-                    } else {
-                        newSet.remove(listItemId);
+            }
+            if (ctx == null && cachedMapFragment != null) {
+                try {
+                    ctx = (Context) tryCallNoArg(cachedMapFragment, "getContext");
+                } catch (Throwable ignored) {}
+            }
+
+            if (ctx != null) {
+                String[] prefNames = new String[] { "unsecure-com.walmart.glass.lists", "com.walmart.glass.lists" };
+                for (String pName : prefNames) {
+                    try {
+                        SharedPreferences prefs = ctx.getSharedPreferences(pName, Context.MODE_PRIVATE);
+                        String targetListId = currentListId;
+                        if (isEmpty(targetListId)) {
+                            for (String k : prefs.getAll().keySet()) {
+                                if (k.startsWith("listsChecklistPreferenceKey")) {
+                                    targetListId = k.substring("listsChecklistPreferenceKey".length());
+                                    break;
+                                }
+                            }
+                        }
+                        if (!isEmpty(targetListId)) {
+                            String prefKey = "listsChecklistPreferenceKey" + targetListId;
+                            Set<String> currentSet = prefs.getStringSet(prefKey, Collections.emptySet());
+                            Set<String> newSet = new HashSet<>(currentSet);
+                            if (isNowChecked) {
+                                newSet.add(listItemId);
+                                EXPLICITLY_UNCHECKED_ITEM_IDS.remove(listItemId);
+                                if (completedItemId != null) EXPLICITLY_UNCHECKED_ITEM_IDS.remove(completedItemId);
+                            } else {
+                                newSet.remove(listItemId);
+                                EXPLICITLY_UNCHECKED_ITEM_IDS.add(listItemId);
+                                if (completedItemId != null) EXPLICITLY_UNCHECKED_ITEM_IDS.add(completedItemId);
+                            }
+                            prefs.edit()
+                                    .putStringSet(prefKey, newSet)
+                                    .putLong("listsChecklistPreferenceTimeoutKey" + targetListId, System.currentTimeMillis() + 7 * 24 * 3600 * 1000L)
+                                    .apply();
+                            Log.i(TAG, "Synced SharedPreferences (" + pName + "): " + newSet);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Failed syncing to SharedPreferences " + pName, t);
                     }
-                    prefs.edit()
-                            .putStringSet(prefKey, newSet)
-                            .putLong("listsChecklistPreferenceTimeoutKey" + currentListId, System.currentTimeMillis() + 7 * 24 * 3600 * 1000L)
-                            .apply();
-                    Log.i(TAG, "Synced SharedPreferences: " + newSet);
                 }
             }
 
-            // 2. Update ChecklistFragment in-memory state
+            // 2. Update ChecklistFragment in-memory state on UI thread
             if (cachedListFragment != null) {
                 final Object fragment = cachedListFragment;
                 final String finalListItemId = listItemId;
                 final boolean finalIsChecked = isNowChecked;
-                View view = (View) tryCallNoArg(fragment, "getView");
                 Runnable updateAction = () -> {
                     try {
-                        if (finalIsChecked) {
-                            Object q0 = readField(fragment, "k");
-                            if (q0 != null) {
-                                Method invoke = q0.getClass().getMethod("invoke", Object.class, Object.class);
-                                invoke.invoke(q0, finalListItemId, 0);
-                                Log.i(TAG, "Invoked ChecklistFragment check lambda k for " + finalListItemId);
-                            }
-                        } else {
-                            Object r0 = readField(fragment, "l");
-                            if (r0 != null) {
-                                Method invoke = r0.getClass().getMethod("invoke", Object.class, Object.class);
-                                invoke.invoke(r0, finalListItemId, 0);
-                                Log.i(TAG, "Invoked ChecklistFragment uncheck lambda l for " + finalListItemId);
+                        Object callback = finalIsChecked ? readField(fragment, "l") : readField(fragment, "k");
+                        if (callback != null) {
+                            for (Method m : callback.getClass().getMethods()) {
+                                if ("invoke".equals(m.getName()) && m.getParameterTypes().length == 2) {
+                                    m.invoke(callback, finalListItemId, 0);
+                                    Log.i(TAG, "Invoked ChecklistFragment " + (finalIsChecked ? "check (l)" : "uncheck (k)") + " for " + finalListItemId);
+                                    break;
+                                }
                             }
                         }
                     } catch (Throwable t) {
                         Log.w(TAG, "Failed to invoke ChecklistFragment lambda for item " + finalListItemId, t);
                     }
                 };
-                if (view != null) {
-                    view.post(updateAction);
-                } else {
-                    updateAction.run();
-                }
+                new Handler(Looper.getMainLooper()).post(updateAction);
             }
         } catch (Throwable t) {
             Log.w(TAG, "Failed in syncChecklistState for " + completedItemId, t);
@@ -1023,6 +1086,10 @@ public class WalmartRouteMyList {
             View routeView = (View) tryCallNoArg(cachedMapFragment, "getView");
             if (routeView != null) {
                 routeView.post(() -> compactNativeFlashButtons(routeView));
+                if (sAutoFlashNextItem) {
+                    sAutoFlashNextItem = false;
+                    routeView.postDelayed(() -> triggerNativeFlash(routeView), 400);
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "Unable to advance currentIndex from carousel focus change", t);
@@ -1047,6 +1114,38 @@ public class WalmartRouteMyList {
 
     /** Walks the native carousel after each bind to hide the feedback and resume-route prompts and
      * collapse unused card space. The native Flash Price Tag button and its timer stay untouched. */
+    public static void triggerNativeFlash(View root) {
+        if (root == null) return;
+        try {
+            List<View> allViews = new ArrayList<>();
+            collectViews(root, allViews);
+            for (View v : allViews) {
+                if (v.isShown() && v.isClickable()) {
+                    String desc = v.getContentDescription() != null ? v.getContentDescription().toString().toLowerCase() : "";
+                    String tag = v.getTag() != null ? v.getTag().toString().toLowerCase() : "";
+                    String cls = v.getClass().getName().toLowerCase();
+                    if (desc.contains("flash") || tag.contains("flash") || cls.contains("timedbutton") || cls.contains("flash")) {
+                        Log.i(TAG, "triggerNativeFlash: clicking view " + v);
+                        v.performClick();
+                        return;
+                    }
+                    if (v instanceof TextView) {
+                        String text = ((TextView) v).getText().toString().toLowerCase();
+                        if (text.contains("flash")) {
+                            Log.i(TAG, "triggerNativeFlash: clicking text view " + v);
+                            v.performClick();
+                            return;
+                        }
+                    }
+                }
+            }
+            Log.i(TAG, "triggerNativeFlash: no explicit flash button found, re-applying ESL tags");
+            applyEslTags(root);
+        } catch (Throwable t) {
+            Log.w(TAG, "triggerNativeFlash failed", t);
+        }
+    }
+
     private static void compactNativeFlashButtons(View root) {
         try {
             List<View> allViews = new ArrayList<>();
@@ -1225,7 +1324,7 @@ public class WalmartRouteMyList {
     }
 
     /** Gets the active shopping-list store ID using the same view-model path as Walmart's UI. */
-    private static String getCurrentStoreId(Object listDetailFragment) {
+    public static String getCurrentStoreId(Object listDetailFragment) {
         try {
             Object viewModel = tryCallNoArg(listDetailFragment, "Ve");
             if (viewModel == null) {
@@ -1235,11 +1334,111 @@ public class WalmartRouteMyList {
             Object storeLiveData = viewModel.getClass().getField("l").get(viewModel);
             Object store = callNoArg(storeLiveData, "getValue");
             Object storeId = store == null ? null : store.getClass().getField("a").get(store);
-            return storeId == null ? "" : storeId.toString();
+            String idStr = storeId == null ? "" : storeId.toString();
+            if (!isEmpty(idStr)) {
+                sCurrentStoreId = idStr;
+            }
+            return idStr;
         } catch (Throwable t) {
             Log.w(TAG, "Unable to read selected store ID; native Route My List will resolve it", t);
             return "";
         }
+    }
+
+    public static String findCurrentStoreId(Context context) {
+        if (!isEmpty(sCurrentStoreId)) return sCurrentStoreId;
+        if (cachedListFragment != null) {
+            String sid = getCurrentStoreId(cachedListFragment);
+            if (!isEmpty(sid)) {
+                sCurrentStoreId = sid;
+                return sid;
+            }
+        }
+        return sCurrentStoreId != null ? sCurrentStoreId : "";
+    }
+
+    public static void postToast(final Context context, final String msg) {
+        if (context == null || msg == null) return;
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Toast.makeText(context.getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) {}
+        });
+    }
+
+    public static void flashShelfTagDirectly(final Context context, final String itemId) {
+        if (context == null || isEmpty(itemId)) {
+            Log.w(TAG, "flashShelfTagDirectly: context or itemId is null/empty");
+            return;
+        }
+        postToast(context, "Looking up shelf tag...");
+        new Thread(() -> {
+            try {
+                List<String> tags = ESL_TAGS.get(itemId);
+                if (tags == null || tags.isEmpty()) {
+                    try {
+                        tags = fetchEslTags(itemId);
+                        if (tags != null && !tags.isEmpty()) {
+                            ESL_TAGS.put(itemId, tags);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Failed fetching ESL tags for item " + itemId, t);
+                    }
+                }
+
+                if (tags == null || tags.isEmpty()) {
+                    postToast(context, "No electronic shelf tag for this item");
+                    return;
+                }
+
+                String storeId = findCurrentStoreId(context);
+                if (isEmpty(storeId)) storeId = "0";
+
+                Log.i(TAG, "Flashing shelf tag for item " + itemId + " tags=" + tags + " store=" + storeId);
+                postToast(context, "Flashing tag " + tags.get(0) + "...");
+
+                Class<?> flashCls = Class.forName("com.walmart.glass.featureinstoremaps.orchestration.graphql.generated.FlashShelfLabel");
+                Class<?> optionalAbsentCls = Class.forName("com.apollographql.apollo3.api.Optional$Absent");
+                Object absent = optionalAbsentCls.getField("INSTANCE").get(null);
+                Constructor<?> flashCtor = flashCls.getConstructor(
+                        List.class,
+                        String.class,
+                        int.class,
+                        Class.forName("com.apollographql.apollo3.api.Optional"),
+                        Class.forName("com.apollographql.apollo3.api.Optional")
+                );
+                Object operation = flashCtor.newInstance(tags, storeId, 30, absent, absent);
+
+                Object client = Class.forName("com.walmart.glass.item.repository.f").getMethod("t").invoke(null);
+                Class<?> callCls = Class.forName("com.apollographql.apollo3.a");
+                Object call = null;
+                for (Constructor<?> ctor : callCls.getConstructors()) {
+                    Class<?>[] pTypes = ctor.getParameterTypes();
+                    if (pTypes.length == 2 && pTypes[0].isInstance(client) && pTypes[1].isInstance(operation)) {
+                        call = ctor.newInstance(client, operation);
+                        break;
+                    }
+                }
+                if (call == null) {
+                    Log.w(TAG, "No Apollo call constructor matched for FlashShelfLabel");
+                    return;
+                }
+
+                Method addHeader = callCls.getMethod("a", String.class, String.class);
+                addHeader.invoke(call, "POST_INCLUDE_DOCUMENT", "true");
+                addHeader.invoke(call, "WM_CONSUMER.ID", "c52ce16a-df55-43ee-ba7c-4c24fdb3bb05");
+                addHeader.invoke(call, "cyomv2enabled", "true");
+                addHeader.invoke(call, "sizeConversionEnabled", "true");
+
+                Class<?> continuationCls = Class.forName("kotlin.coroutines.Continuation");
+                Object response = awaitSuspend(callCls.getMethod("b", continuationCls), call, continuationCls);
+                Log.i(TAG, "FlashShelfLabel response: " + response);
+                postToast(context, "Tag flashing (" + tags.get(0) + ")!");
+            } catch (Throwable t) {
+                Log.e(TAG, "Error in flashShelfTagDirectly for item " + itemId, t);
+                postToast(context, "Flash tag failed: " + t.getMessage());
+            }
+        }, "FlashTagDirectThread").start();
     }
 
     /** Called from the patched InStoreMapsBaseFragment.onViewCreated to add the Prev/Next bar. */
@@ -1247,6 +1446,16 @@ public class WalmartRouteMyList {
         try {
             cachedMapFragment = mapFragment;
             injectNavBar(mapFragment);
+            if (sAutoFlashNextItem) {
+                sAutoFlashNextItem = false;
+                try {
+                    final View mapRoot = (View) callNoArg(mapFragment, "getView");
+                    if (mapRoot != null) {
+                        mapRoot.postDelayed(() -> triggerNativeFlash(mapRoot), 600L);
+                        mapRoot.postDelayed(() -> triggerNativeFlash(mapRoot), 1200L);
+                    }
+                } catch (Throwable ignored) {}
+            }
         } catch (Throwable t) {
             Log.e(TAG, "injectNavBar failed", t);
         }
@@ -1864,28 +2073,119 @@ public class WalmartRouteMyList {
         ITEM_QUANTITY.clear();
 
         for (Object item : items) {
-            Object product = tryCallAny(item, "getProduct", "A");
+            Object detailItem = item;
+            Boolean isCheckedInChecklist = null;
+            try {
+                Object boolObj = readField(item, "a");
+                if (boolObj instanceof Boolean) {
+                    isCheckedInChecklist = (Boolean) boolObj;
+                }
+                Object subDetail = readField(item, "b");
+                if (subDetail != null && !(subDetail instanceof String) && !(subDetail instanceof Number) && !(subDetail instanceof Boolean)) {
+                    detailItem = subDetail;
+                }
+            } catch (Throwable ignored) {}
+
+            Object product = tryCallNoArg(detailItem, "getProduct");
+            if (product == null) {
+                product = tryCallAny(detailItem, "A", "g", "e");
+            }
+            if (product == null) {
+                try {
+                    Object pField = readField(detailItem, "e");
+                    if (pField != null && !(pField instanceof String)) {
+                        product = pField;
+                    }
+                } catch (Throwable ignored) {}
+            }
             if (product != null) {
                 results.add(product);
 
-                String itemId = (String) tryCallAny(product, "getUsItemId", "D3");
+                String itemId = (String) tryCallAny(product, "getUsItemId", "D3", "u");
                 if (isEmpty(itemId)) {
-                    itemId = (String) tryCallAny(product, "getId", "d");
+                    itemId = (String) tryCallAny(product, "getId", "d", "k");
                 }
 
-                Object requestedQuantity = tryCallAny(item, "getRequestedQuantity", "F", "e");
+                Object listItemIdObj = null;
+                try {
+                    listItemIdObj = readField(detailItem, "a");
+                } catch (Throwable ignored) {}
+                if (listItemIdObj == null || !(listItemIdObj instanceof String)) {
+                    listItemIdObj = tryCallAny(detailItem, "getListItemId", "w", "getId");
+                }
+                String listItemId = listItemIdObj != null ? listItemIdObj.toString() : null;
+
+                if (itemId != null && Boolean.TRUE.equals(isCheckedInChecklist)) {
+                    ALREADY_CHECKED_ITEM_IDS.add(itemId);
+                }
+
+                Object requestedQuantity = tryCallAny(detailItem, "getRequestedQuantity", "F", "e", "d");
+                if (requestedQuantity == null) {
+                    try {
+                        requestedQuantity = readField(detailItem, "d");
+                    } catch (Throwable ignored) {}
+                }
                 if (itemId != null && requestedQuantity instanceof Integer
                         && ((Integer) requestedQuantity).intValue() > 0) {
                     ITEM_QUANTITY.put(itemId, (Integer) requestedQuantity);
                 }
 
-                Object listItemId = tryCallAny(item, "getListItemId", "w", "getId");
                 if (itemId != null && listItemId != null) {
-                    MAP_ITEM_TO_LIST_ITEM.put(itemId, listItemId.toString());
-                    LIST_ITEM_TO_MAP_ITEM.put(listItemId.toString(), itemId);
+                    MAP_ITEM_TO_LIST_ITEM.put(itemId, listItemId);
+                    LIST_ITEM_TO_MAP_ITEM.put(listItemId, itemId);
                 }
             }
         }
+        // Extract checked state directly from ChecklistViewModel (Ue()) if available
+        Object checklistVm = tryCallNoArg(fragment, "Ue");
+        if (checklistVm != null) {
+            try {
+                Object useCase = readField(checklistVm, "l");
+                if (useCase != null) {
+                    List<?> checklistItems = (List<?>) readField(useCase, "d");
+                    if (checklistItems != null) {
+                        for (Object chk : checklistItems) {
+                            if (chk == null) continue;
+                            Boolean isChecked = (Boolean) tryCallNoArg(chk, "i");
+                            if (isChecked == null) {
+                                Object a = readField(chk, "a");
+                                if (a instanceof Boolean) isChecked = (Boolean) a;
+                            }
+                            Object detail = tryCallNoArg(chk, "g");
+                            if (detail == null) {
+                                detail = readField(chk, "b");
+                            }
+                            if (detail != null) {
+                                String listItemId = (String) tryCallAny(detail, "w", "getListItemId");
+                                if (listItemId == null) {
+                                    Object a = readField(detail, "a");
+                                    if (a instanceof String) listItemId = (String) a;
+                                }
+                                Object product = tryCallNoArg(detail, "getProduct");
+                                if (product == null) product = tryCallAny(detail, "A", "g", "e");
+                                String itemId = product != null ? (String) tryCallAny(product, "getUsItemId", "D3", "u", "getId") : null;
+
+                                if (itemId != null && listItemId != null) {
+                                    MAP_ITEM_TO_LIST_ITEM.put(itemId, listItemId);
+                                    LIST_ITEM_TO_MAP_ITEM.put(listItemId, itemId);
+                                }
+                                if (Boolean.TRUE.equals(isChecked)) {
+                                    if (itemId != null) ALREADY_CHECKED_ITEM_IDS.add(itemId);
+                                    if (listItemId != null) ALREADY_CHECKED_ITEM_IDS.add(listItemId);
+                                    Log.i(TAG, "findProducts: Item " + itemId + " (" + listItemId + ") is ALREADY CHECKED in checklist");
+                                } else if (Boolean.FALSE.equals(isChecked)) {
+                                    if (itemId != null) ALREADY_CHECKED_ITEM_IDS.remove(itemId);
+                                    if (listItemId != null) ALREADY_CHECKED_ITEM_IDS.remove(listItemId);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Failed reading checklist items from Ue().l.d", t);
+            }
+        }
+
         Log.i(TAG, "MAP_ITEM_TO_LIST_ITEM populated with " + MAP_ITEM_TO_LIST_ITEM.size() + " mapping(s): " + MAP_ITEM_TO_LIST_ITEM);
 
         loadCheckedItemsFromPreferences(fragment);
@@ -1893,8 +2193,101 @@ public class WalmartRouteMyList {
         return results;
     }
 
+    public static void syncChecklistItemsFromSavedState(Object fragment) {
+        try {
+            if (fragment == null) return;
+            loadCheckedItemsFromPreferences(fragment);
+            Object c = tryCallNoArg(fragment, "Ue");
+            if (c == null) return;
+            Object useCase = readField(c, "l");
+            if (useCase == null) return;
+            List<?> checklistItems = (List<?>) readField(useCase, "d");
+            if (checklistItems == null || checklistItems.isEmpty()) return;
+
+            // Seed ALREADY_CHECKED_ITEM_IDS from any items currently marked checked in checklist
+            for (Object chk : checklistItems) {
+                if (chk == null) continue;
+                Boolean isChk = (Boolean) tryCallNoArg(chk, "i");
+                if (isChk == null) {
+                    Object a = readField(chk, "a");
+                    if (a instanceof Boolean) isChk = (Boolean) a;
+                }
+                if (Boolean.TRUE.equals(isChk)) {
+                    Object d = tryCallNoArg(chk, "g");
+                    if (d == null) d = readField(chk, "b");
+                    if (d != null) {
+                        String lid = (String) tryCallAny(d, "w", "getListItemId");
+                        if (lid == null) {
+                            Object a = readField(d, "a");
+                            if (a instanceof String) lid = (String) a;
+                        }
+                        if (lid != null && !EXPLICITLY_UNCHECKED_ITEM_IDS.contains(lid)) {
+                            ALREADY_CHECKED_ITEM_IDS.add(lid);
+                            String mid = LIST_ITEM_TO_MAP_ITEM.get(lid);
+                            if (mid != null) ALREADY_CHECKED_ITEM_IDS.add(mid);
+                        }
+                    }
+                }
+            }
+
+            Object q0 = readField(fragment, "k"); // uncheck
+            Object r0 = readField(fragment, "l"); // check
+
+            for (int i = 0; i < checklistItems.size(); i++) {
+                Object chk = checklistItems.get(i);
+                if (chk == null) continue;
+                Boolean isChecked = (Boolean) tryCallNoArg(chk, "i");
+                if (isChecked == null) {
+                    Object a = readField(chk, "a");
+                    if (a instanceof Boolean) isChecked = (Boolean) a;
+                }
+                Object detail = tryCallNoArg(chk, "g");
+                if (detail == null) {
+                    detail = readField(chk, "b");
+                }
+                if (detail == null) continue;
+                String listItemId = (String) tryCallAny(detail, "w", "getListItemId");
+                if (listItemId == null) {
+                    Object a = readField(detail, "a");
+                    if (a instanceof String) listItemId = (String) a;
+                }
+                if (listItemId == null) continue;
+
+                String mapItemId = LIST_ITEM_TO_MAP_ITEM.get(listItemId);
+                boolean isExplicitlyUnchecked = EXPLICITLY_UNCHECKED_ITEM_IDS.contains(listItemId)
+                        || (mapItemId != null && EXPLICITLY_UNCHECKED_ITEM_IDS.contains(mapItemId));
+                boolean shouldBeChecked = (ALREADY_CHECKED_ITEM_IDS.contains(listItemId)
+                        || (mapItemId != null && ALREADY_CHECKED_ITEM_IDS.contains(mapItemId)))
+                        && !isExplicitlyUnchecked;
+
+                if (shouldBeChecked && !Boolean.TRUE.equals(isChecked)) {
+                    if (r0 != null) {
+                        for (Method m : r0.getClass().getMethods()) {
+                            if ("invoke".equals(m.getName()) && m.getParameterTypes().length == 2) {
+                                m.invoke(r0, listItemId, Integer.valueOf(i));
+                                Log.i(TAG, "syncChecklistItems: checked " + listItemId + " at " + i);
+                                break;
+                            }
+                        }
+                    }
+                } else if (isExplicitlyUnchecked && Boolean.TRUE.equals(isChecked)) {
+                    if (q0 != null) {
+                        for (Method m : q0.getClass().getMethods()) {
+                            if ("invoke".equals(m.getName()) && m.getParameterTypes().length == 2) {
+                                m.invoke(q0, listItemId, Integer.valueOf(i));
+                                Log.i(TAG, "syncChecklistItems: unchecked " + listItemId + " at " + i);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed in syncChecklistItemsFromSavedState", t);
+        }
+    }
+
     private static void loadCheckedItemsFromPreferences(Object fragment) {
-        ALREADY_CHECKED_ITEM_IDS.clear();
         Context ctx = null;
         try {
             ctx = (Context) tryCallNoArg(fragment, "getContext");
@@ -1904,21 +2297,38 @@ public class WalmartRouteMyList {
                 ctx = (Context) tryCallNoArg(fragment, "requireContext");
             } catch (Throwable ignored) {}
         }
-        if (ctx != null && !isEmpty(currentListId)) {
-            try {
-                SharedPreferences prefs = ctx.getSharedPreferences("com.walmart.glass.lists", Context.MODE_PRIVATE);
-                Set<String> checkedListIds = prefs.getStringSet("listsChecklistPreferenceKey" + currentListId, Collections.emptySet());
-                if (checkedListIds != null) {
-                    for (Map.Entry<String, String> entry : MAP_ITEM_TO_LIST_ITEM.entrySet()) {
-                        if (checkedListIds.contains(entry.getValue())) {
-                            ALREADY_CHECKED_ITEM_IDS.add(entry.getKey());
+        if (ctx != null) {
+            String[] prefNames = new String[] { "unsecure-com.walmart.glass.lists", "com.walmart.glass.lists" };
+            for (String pName : prefNames) {
+                try {
+                    SharedPreferences prefs = ctx.getSharedPreferences(pName, Context.MODE_PRIVATE);
+                    String targetListId = currentListId;
+                    if (isEmpty(targetListId)) {
+                        for (String k : prefs.getAll().keySet()) {
+                            if (k.startsWith("listsChecklistPreferenceKey")) {
+                                targetListId = k.substring("listsChecklistPreferenceKey".length());
+                                break;
+                            }
                         }
                     }
+                    if (!isEmpty(targetListId)) {
+                        Set<String> checkedListIds = prefs.getStringSet("listsChecklistPreferenceKey" + targetListId, Collections.emptySet());
+                        if (checkedListIds != null && !checkedListIds.isEmpty()) {
+                            for (String checkedId : checkedListIds) {
+                                String mapId = LIST_ITEM_TO_MAP_ITEM.get(checkedId);
+                                if (mapId != null) {
+                                    ALREADY_CHECKED_ITEM_IDS.add(mapId);
+                                } else {
+                                    ALREADY_CHECKED_ITEM_IDS.add(checkedId);
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "Failed reading checklist SharedPreferences from " + pName, t);
                 }
-                Log.i(TAG, "Loaded checked items for list " + currentListId + ": " + ALREADY_CHECKED_ITEM_IDS);
-            } catch (Throwable t) {
-                Log.w(TAG, "Failed reading checklist SharedPreferences", t);
             }
+            Log.i(TAG, "Loaded checked items for list " + currentListId + ": " + ALREADY_CHECKED_ITEM_IDS);
         }
     }
 
@@ -2013,7 +2423,7 @@ public class WalmartRouteMyList {
     }
 
     /** Tries each candidate method name in order, returning the first successful call's result. */
-    private static Object tryCallAny(Object target, String... candidateNames) {
+    public static Object tryCallAny(Object target, String... candidateNames) {
         if (target == null) return null;
         Method m = findMethodAny(target.getClass(), candidateNames);
         if (m == null) return null;
@@ -2213,4 +2623,88 @@ public class WalmartRouteMyList {
         }
     }
 
+
+    public static void onMyItemsViewCreated(Object fragment, View view) {
+        try {
+            if (fragment == null) return;
+            Log.i(TAG, "onMyItemsViewCreated triggered for " + fragment + ", view=" + view);
+
+            View rootView = view != null ? view : (View) tryCallNoArg(fragment, "getView");
+            if (rootView == null) return;
+
+            final View finalRoot = rootView;
+            Runnable switchTab = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        int listsTabId = finalRoot.getResources().getIdentifier("myitems_tab_lists", "id", finalRoot.getContext().getPackageName());
+                        View listsTab = listsTabId != 0 ? finalRoot.getRootView().findViewById(listsTabId) : null;
+                        if (listsTab == null && listsTabId != 0) {
+                            listsTab = finalRoot.findViewById(listsTabId);
+                        }
+                        if (listsTab != null) {
+                            listsTab.performClick();
+                            Log.i(TAG, "onMyItemsViewCreated: performed click on myitems_tab_lists");
+                            return;
+                        }
+
+                        int vpId = finalRoot.getResources().getIdentifier("myitems_view_pager", "id", finalRoot.getContext().getPackageName());
+                        View vp = vpId != 0 ? finalRoot.findViewById(vpId) : null;
+                        if (vp != null) {
+                            for (Method m : vp.getClass().getMethods()) {
+                                if ("setCurrentItem".equals(m.getName())) {
+                                    Class<?>[] p = m.getParameterTypes();
+                                    if (p.length == 2 && (p[0] == int.class || p[0] == Integer.TYPE)) {
+                                        m.invoke(vp, 1, false);
+                                        Log.i(TAG, "onMyItemsViewCreated: switched ViewPager to page 1");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        int tlId = finalRoot.getResources().getIdentifier("myitems_tab_layout", "id", finalRoot.getContext().getPackageName());
+                        View tl = tlId != 0 ? finalRoot.findViewById(tlId) : null;
+                        if (tl != null) {
+                            for (Method m : tl.getClass().getMethods()) {
+                                if ("getTabAt".equals(m.getName()) && m.getParameterTypes().length == 1) {
+                                    Object tab = m.invoke(tl, 1);
+                                    if (tab != null) {
+                                        for (Method sm : tab.getClass().getMethods()) {
+                                            if ("select".equals(sm.getName()) && sm.getParameterTypes().length == 0) {
+                                                sm.invoke(tab);
+                                                Log.i(TAG, "onMyItemsViewCreated: selected tab 1 on TabLayout");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "onMyItemsViewCreated runnable failed", t);
+                    }
+                }
+            };
+            finalRoot.post(switchTab);
+            finalRoot.postDelayed(switchTab, 150L);
+            finalRoot.postDelayed(switchTab, 350L);
+            finalRoot.postDelayed(switchTab, 600L);
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed in onMyItemsViewCreated", t);
+        }
+    }
+
+    public static void hideAdView(View v) {
+        if (v == null) return;
+        try {
+            v.setVisibility(View.GONE);
+            ViewGroup.LayoutParams lp = v.getLayoutParams();
+            if (lp != null) {
+                lp.width = 0;
+                lp.height = 0;
+                v.setLayoutParams(lp);
+            }
+        } catch (Throwable ignored) {}
+    }
 }

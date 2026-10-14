@@ -60,6 +60,14 @@ object NativeRouteMyListViewCreatedFingerprint : Fingerprint(
     parameters = listOf("Landroid/view/View;", "Landroid/os/Bundle;"),
 )
 
+object InStoreMapsBaseFragmentDestroyViewFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/instoremaps/view/InStoreMapsBaseFragment;",
+    name = "onDestroyView",
+    accessFlags = listOf(AccessFlags.PUBLIC),
+    returnType = "V",
+    parameters = emptyList(),
+)
+
 // d0 is the native carousel callback. Its checkbox handler (d) mutates the view model synchronously;
 // adding our callback immediately after it lets the extension advance only after that mutation.
 object NativeRouteMyListCheckboxFingerprint : Fingerprint(
@@ -110,6 +118,12 @@ val routeMyListPatch = bytecodePatch(
         nativeRouteMethod.addInstructions(
             nativeRouteMethod.instructions.size - 1,
             "invoke-static/range {p0 .. p0}, $EXTENSION_CLASS->onNativeRouteMyListViewCreated(Ljava/lang/Object;)V",
+        )
+
+        val destroyViewMethod = InStoreMapsBaseFragmentDestroyViewFingerprint.method
+        destroyViewMethod.addInstructions(
+            0,
+            "invoke-static {}, $EXTENSION_CLASS->onNativeRouteMyListViewDestroyed()V",
         )
 
         val meMethod = RouteMyListViewModelMeFingerprint.method
