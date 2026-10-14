@@ -1,3 +1,9 @@
+## [3.0.2](https://github.com/R2bEEaton/walmart-morphe/compare/v3.0.1...v3.0.2) (2026-10-14)
+
+### 🐛 Bug Fixes
+
+* **ads:** refine feed module filtering to strip promo carousels and banners ([bcdc87f](https://github.com/R2bEEaton/walmart-morphe/commit/bcdc87f1a9cde8f7a2269cd22b21886a044212a8))
+
 ## [3.0.1](https://github.com/R2bEEaton/walmart-morphe/compare/v3.0.0...v3.0.1) (2026-10-14)
 
 ### 🐛 Bug Fixes
