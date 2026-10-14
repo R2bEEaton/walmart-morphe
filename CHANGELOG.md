@@ -1,3 +1,19 @@
+## [3.0.0](https://github.com/R2bEEaton/walmart-morphe/compare/v2.1.0...v3.0.0) (2026-10-14)
+
+### ⚠ BREAKING CHANGES
+
+* Major release 3.0.0 introducing Flash Everywhere and expanding into a comprehensive 6-mod Walmart suite:
+- Flash Everywhere: dedicated [ ((•)) Flash tag ] sibling pill next to Aisle badges across lists and checklists
+- Real-Time Stock & Inventory Display: live in-store stock availability badges
+- Find Item for Linked Items: restores the ability to link different products on list items
+- Default Lists Tab: opens Lists tab automatically when tapping My Items
+- Remove Sponsored Ads: removes ad carousels and sponsored banners
+- Route My List: multi-pin store routing on Walmart's interactive map
+
+### ✨ New Features
+
+* expand Walmart Morphe mod suite to v3.0.0 ([f0fbbb0](https://github.com/R2bEEaton/walmart-morphe/commit/f0fbbb0960f403cc74ceb22be51171a2b7fa2387))
+
 ## [2.1.0](https://github.com/R2bEEaton/walmart-morphe/compare/v2.0.1...v2.1.0) (2026-10-08)
 
 ### ✨ New Features
