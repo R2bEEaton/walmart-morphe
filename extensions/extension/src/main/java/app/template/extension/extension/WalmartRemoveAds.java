@@ -124,12 +124,14 @@ public class WalmartRemoveAds {
             return list;
         }
         try {
-            Log.e(TAG, "filterModules called with " + list.size() + " items");
             ArrayList filtered = new ArrayList(list.size());
+            int idx = 0;
             for (Object item : list) {
+                idx++;
                 if (item == null) continue;
-                if (isUnwantedModule(item)) {
-                    Log.e(TAG, "Filtered unwanted module: " + item.getClass().getName());
+                boolean unwanted = isUnwantedModule(item);
+                if (unwanted) {
+                    Log.e(TAG, "FILTERED item #" + idx + ": " + item.getClass().getSimpleName());
                     continue;
                 }
                 filtered.add(item);
@@ -172,9 +174,7 @@ public class WalmartRemoveAds {
             className.contains("socialcontentcarousel") ||
             className.contains("socialreel") ||
             className.contains(".ads.") ||
-            className.contains(".ad.") ||
             className.contains("advertisement") ||
-            className.contains("sponsored") ||
             className.contains("skyline") ||
             className.contains("spotlightad") ||
             className.contains("bannerv1deals") ||
@@ -192,43 +192,68 @@ public class WalmartRemoveAds {
             return true;
         }
 
-        // Check getType() via reflection
+        // Check module's toString content for precise viewstate/moduletype patterns
         try {
-            Method getTypeMethod = module.getClass().getMethod("getType");
-            Object typeObj = getTypeMethod.invoke(module);
-            if (typeObj != null) {
-                String type = typeObj.toString().toLowerCase(Locale.US);
-                if (type.contains("hero_carousel") ||
-                    type.contains("adjustable_banner") ||
-                    type.contains("adjustable_card") ||
-                    type.contains("triple_pack") ||
-                    type.contains("evergreen_banner") ||
-                    type.contains("wplus_banner") ||
-                    type.contains("display_ad") ||
-                    type.contains("skyline_ad") ||
-                    type.contains("sponsored_product") ||
-                    type.contains("trend_engine") ||
-                    type.contains("gas_savings")) {
-                    return true;
-                }
-            }
-        } catch (Throwable ignored) {}
+            String str = module.toString().toLowerCase(Locale.US);
 
-        // Check getName() via reflection
-        try {
-            Method getNameMethod = module.getClass().getMethod("getName");
-            Object nameObj = getNameMethod.invoke(module);
-            if (nameObj != null) {
-                String name = nameObj.toString().toLowerCase(Locale.US);
-                if (name.contains("gas_savings") ||
-                    name.contains("omg_worthy") ||
-                    name.contains("forever21") ||
-                    name.contains("citgo") ||
-                    name.contains("hero_carousel") ||
-                    name.contains("trending") ||
-                    name.contains("fits")) {
+            // Always preserve subnavigation (departments, rollbacks header)
+            if (str.contains("moduletype=subnavigation") || str.contains("viewstate=subnavigation")) {
+                return false;
+            }
+
+            // Always preserve paging footer
+            if (className.contains("paging.layout")) {
+                return false;
+            }
+
+            // Check for explicit unwanted promo / ad module types and viewstates
+            if (str.contains("moduletype=personalizedslotpromotionbanner") ||
+                str.contains("moduletype=prismadjustablebanner") ||
+                str.contains("moduletype=adjustablebanner") ||
+                str.contains("moduletype=adjustablecardcarousel") ||
+                str.contains("moduletype=prismevergreenbanner") ||
+                str.contains("moduletype=evergreenbanner") ||
+                str.contains("moduletype=triplepack") ||
+                str.contains("moduletype=prismtriplepack") ||
+                str.contains("moduletype=herocarousel") ||
+                str.contains("moduletype=prismherocarousel") ||
+                str.contains("moduletype=trendengine") ||
+                str.contains("moduletype=socialreel") ||
+                str.contains("moduletype=socialcontentcarousel") ||
+                str.contains("moduletype=videocarousel") ||
+                str.contains("moduletype=surveynudge") ||
+                str.contains("moduletype=signinnudge") ||
+                str.contains("moduletype=displayad") ||
+                str.contains("moduletype=skyline") ||
+                str.contains("viewstate=adjustablebanner") ||
+                str.contains("viewstate=adjustablecardcarousel") ||
+                str.contains("viewstate=prismevergreenbannermodel") ||
+                str.contains("viewstate=triplepack") ||
+                str.contains("viewstate=herocarousel")) {
+                return true;
+            }
+
+            // Sponsored item carousel check
+            if (str.contains("moduletype=itemcarousel")) {
+                if (str.contains("issponsoredcarousel=true") || str.contains("modulename=sponsored") || str.contains("moduletype=sponsored")) {
                     return true;
                 }
+                // Trending / non-essential item carousels
+                if (str.contains("trendengine") || str.contains("modulename=trend") || str.contains("omg-worthy")) {
+                    return true;
+                }
+                // Keep useful item carousels like "reorder your essentials", "recently viewed", etc.
+                return false;
+            }
+
+            // Unwanted text patterns
+            if (str.contains("members save 10¢/gallon") ||
+                str.contains("more gas savings") ||
+                str.contains("omg-worthy fits") ||
+                str.contains("try walmart+ for $1") ||
+                str.contains("new from forever 21") ||
+                str.contains("paramount+ or peacock is included")) {
+                return true;
             }
         } catch (Throwable ignored) {}
 
@@ -241,7 +266,6 @@ public class WalmartRemoveAds {
     public static void onSponsoredLabelSet(View sponsoredContainer, String label) {
         if (sponsoredContainer == null) return;
         boolean isSponsored = (label != null && !label.trim().isEmpty() && !label.equalsIgnoreCase("null"));
-        Log.e(TAG, "onSponsoredLabelSet: isSponsored=" + isSponsored + ", label=" + label);
         setTileCollapsed(sponsoredContainer, isSponsored);
     }
 
