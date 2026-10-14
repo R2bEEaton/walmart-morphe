@@ -1,3 +1,9 @@
+## [3.0.1](https://github.com/R2bEEaton/walmart-morphe/compare/v3.0.0...v3.0.1) (2026-10-14)
+
+### 🐛 Bug Fixes
+
+* filter promo banners, hero carousels, and sponsored tiles in Remove Ads ([6d80878](https://github.com/R2bEEaton/walmart-morphe/commit/6d808787563a2990cc4166cf580964547a409a42))
+
 ## [3.0.0](https://github.com/R2bEEaton/walmart-morphe/compare/v2.1.0...v3.0.0) (2026-10-14)
 
 ### ⚠ BREAKING CHANGES
