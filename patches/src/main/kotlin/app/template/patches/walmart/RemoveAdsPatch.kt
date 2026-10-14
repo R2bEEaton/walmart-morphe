@@ -6,6 +6,7 @@ import app.morphe.patcher.patch.bytecodePatch
 import com.android.tools.smali.dexlib2.AccessFlags
 
 private const val EXTENSION_CLASS = "Lapp/template/extension/extension/WalmartRouteMyList;"
+private const val REMOVE_ADS_EXTENSION_CLASS = "Lapp/template/extension/extension/WalmartRemoveAds;"
 
 object CCMUtilsFingerprint : Fingerprint(
     definingClass = "Lcom/walmart/glass/ads/utils/CCMUtilsKt;",
@@ -21,6 +22,22 @@ object AdPlaceHolderViewOnAttachedFingerprint : Fingerprint(
     accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
     returnType = "V",
     parameters = emptyList(),
+)
+
+object TempoAdapterSetItemsFingerprint : Fingerprint(
+    definingClass = "Lglass/platform/tempo/components/widget/adapter/a;",
+    name = "y",
+    accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
+    returnType = "V",
+    parameters = listOf("Ljava/util/List;", "Lkotlin/jvm/functions/Function0;"),
+)
+
+object SponsoredContainerViewSetLabelFingerprint : Fingerprint(
+    definingClass = "Lcom/walmart/glass/ui/shared/sponsored/SponsoredContainerView;",
+    name = "setLabel",
+    accessFlags = listOf(AccessFlags.PUBLIC, AccessFlags.FINAL),
+    returnType = "V",
+    parameters = listOf("Ljava/lang/String;"),
 )
 
 val removeAdsPatch = bytecodePatch(
@@ -48,6 +65,21 @@ val removeAdsPatch = bytecodePatch(
         onAttachedMethod.addInstructions(
             0,
             "invoke-static {p0}, $EXTENSION_CLASS->hideAdView(Landroid/view/View;)V",
+        )
+
+        val tempoAdapterMethod = TempoAdapterSetItemsFingerprint.method
+        tempoAdapterMethod.addInstructions(
+            0,
+            """
+                invoke-static {p1}, $REMOVE_ADS_EXTENSION_CLASS->filterModules(Ljava/util/List;)Ljava/util/List;
+                move-result-object p1
+            """.trimIndent()
+        )
+
+        val sponsoredLabelMethod = SponsoredContainerViewSetLabelFingerprint.method
+        sponsoredLabelMethod.addInstructions(
+            0,
+            "invoke-static {p0, p1}, $REMOVE_ADS_EXTENSION_CLASS->onSponsoredLabelSet(Landroid/view/View;Ljava/lang/String;)V",
         )
     }
 }
